@@ -1,0 +1,13 @@
+{
+  "name": "gods-ping-backend",
+  "version": "1.0.0",
+  "description": "Gods Ping (Shichi-Fukujin) - AI Trading Backend",
+  "main": "app/main.py",
+  "scripts": {
+    "start": "uvicorn app.main:app --host 0.0.0.0 --port 8000",
+    "dev": "uvicorn app.main:app --reload --port 8000"
+  },
+  "keywords": ["trading", "ai", "crypto", "binance"],
+  "author": "gunaex",
+  "license": "PRIVATE"
+}
