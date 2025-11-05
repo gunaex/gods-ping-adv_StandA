@@ -98,10 +98,6 @@ export default function LoginPage() {
             {loading ? 'Logging in...' : 'Login'}
           </button>
         </form>
-
-        <div style={{ marginTop: '20px', textAlign: 'center', opacity: 0.7, fontSize: '0.9rem' }}>
-          <p>Default: Admin / K@nph0ng69</p>
-        </div>
       </div>
     </div>
   );

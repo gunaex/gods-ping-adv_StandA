@@ -5,12 +5,14 @@ Main API endpoints for Shichi-Fukujin single-page trading platform
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel
+import time
 
 from app.db import engine, get_db, Base
 from app.models import User, Trade, BotConfig
+from app.logging_models import Log, LogCategory, LogLevel
 from app.auth import (
     verify_password, get_password_hash, create_access_token, create_refresh_token,
     get_current_active_user, ensure_admin_exists, ADMIN_USERNAME,
@@ -63,6 +65,8 @@ class UpdateBotConfigRequest(BaseModel):
     min_confidence: Optional[float] = None
     position_size_ratio: Optional[float] = None
     max_daily_loss: Optional[float] = None
+    entry_step_percent: Optional[float] = None
+    exit_step_percent: Optional[float] = None
     grid_enabled: Optional[bool] = None
     grid_lower_price: Optional[float] = None
     grid_upper_price: Optional[float] = None
@@ -71,6 +75,12 @@ class UpdateBotConfigRequest(BaseModel):
     dca_amount_per_period: Optional[float] = None
     dca_interval_days: Optional[int] = None
     gods_hand_enabled: Optional[bool] = None
+    notification_email: Optional[str] = None
+    notify_on_action: Optional[bool] = None
+    notify_on_position_size: Optional[bool] = None
+    notify_on_failure: Optional[bool] = None
+    gmail_user: Optional[str] = None
+    gmail_app_password: Optional[str] = None
 
 
 class UpdateAPIKeysRequest(BaseModel):
@@ -101,10 +111,14 @@ async def startup_event():
 # Health Check
 @app.get("/")
 async def root():
+    """Root endpoint with server info"""
     return {
         "app": "Gods Ping (Shichi-Fukujin)",
         "status": "running",
-        "version": "1.0.0"
+        "version": "1.0.0",
+        "server_time": datetime.now(timezone.utc).isoformat(),
+        "server_timezone": "UTC",
+        "timestamp": int(time.time())
     }
 
 
@@ -205,6 +219,52 @@ async def update_api_keys(
     return {"message": "API keys updated successfully"}
 
 
+@app.get("/api/settings/validate-keys")
+async def validate_api_keys(
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Validate Binance TH API keys by calling account endpoint"""
+    from app.binance_client import get_binance_th_client
+    
+    try:
+        # Get user
+        user = db.query(User).filter(User.id == current_user["id"]).first()
+        if not user or not user.binance_api_key or not user.binance_api_secret:
+            return {
+                "ok": False,
+                "error": "API keys not configured",
+                "hint": "Please configure your Binance TH API keys in Settings."
+            }
+        
+        # Decrypt API keys
+        api_key = decrypt_api_key(user.binance_api_key)
+        api_secret = decrypt_api_key(user.binance_api_secret)
+        
+        # Create client and test connection
+        client = get_binance_th_client(api_key, api_secret)
+        account = client.get_account()
+        can_trade = account.get('canTrade', True)
+        
+        return {
+            "ok": True,
+            "canTrade": can_trade,
+            "msg": "API keys are valid for Binance TH",
+        }
+    except Exception as e:
+        msg = str(e)
+        hint = None
+        if "-2008" in msg or "Invalid Api-Key" in msg:
+            hint = "Invalid API key for Binance TH. Ensure you used Binance TH keys (not global) and enabled Read permission."
+        elif "-1021" in msg or "Timestamp" in msg:
+            hint = "Time sync error. Check your system clock."
+        return {
+            "ok": False,
+            "error": msg,
+            "hint": hint,
+        }
+
+
 @app.get("/api/settings/bot-config")
 async def get_bot_config(
     current_user: dict = Depends(get_current_active_user),
@@ -217,6 +277,8 @@ async def get_bot_config(
         # Create default config
         config = BotConfig(user_id=current_user["id"])
         db.add(config)
+        db.commit()
+        db.refresh(config)
         db.commit()
         db.refresh(config)
     
@@ -239,6 +301,9 @@ async def update_bot_config(
     # Update fields
     update_data = request.dict(exclude_unset=True)
     for field, value in update_data.items():
+        # Don't update password if it's the masked value
+        if field == 'gmail_app_password' and value == '***':
+            continue
         setattr(config, field, value)
     
     config.updated_at = datetime.utcnow()
@@ -281,9 +346,35 @@ async def get_ticker(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/market/ticker/{base}/{quote}")
+async def get_ticker_separated(base: str, quote: str):
+    """Get current ticker price (separated format)"""
+    symbol = f"{base}/{quote}"
+    from app.market import get_current_price
+    
+    try:
+        price_data = await get_current_price(symbol)
+        return price_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/market/candles/{symbol}")
 async def get_candles(symbol: str, timeframe: str = "1h", limit: int = 100):
     """Get candlestick data"""
+    from app.market import get_candlestick_data
+    
+    try:
+        candles = await get_candlestick_data(symbol, timeframe, limit)
+        return {"symbol": symbol, "timeframe": timeframe, "candles": candles}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/market/candles/{base}/{quote}")
+async def get_candles_separated(base: str, quote: str, timeframe: str = "1h", limit: int = 100):
+    """Get candlestick data (separated format)"""
+    symbol = f"{base}/{quote}"
     from app.market import get_candlestick_data
     
     try:
@@ -301,6 +392,23 @@ async def get_orderbook(symbol: str, limit: int = 20):
     try:
         orderbook = await get_order_book(symbol, limit)
         return orderbook
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Account Balance
+@app.get("/api/account/balance")
+async def get_balance(
+    fiat_currency: str = "USD",
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get account balance and P/L"""
+    from app.market import get_account_balance
+    
+    try:
+        balance = await get_account_balance(db, current_user['id'], fiat_currency)
+        return balance
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -323,6 +431,25 @@ async def get_ai_recommendation(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/ai/recommendation/{base}/{quote}")
+async def get_ai_recommendation_separated(
+    base: str,
+    quote: str,
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get AI trading recommendation (separated symbol format)"""
+    from app.ai_engine import get_trading_recommendation
+    
+    try:
+        symbol = f"{base}/{quote}"
+        config = db.query(BotConfig).filter(BotConfig.user_id == current_user["id"]).first()
+        recommendation = await get_trading_recommendation(symbol, config)
+        return recommendation
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/ai/analysis/{symbol}")
 async def get_advanced_analysis(
     symbol: str,
@@ -331,6 +458,22 @@ async def get_advanced_analysis(
     """Get advanced AI market analysis"""
     from app.ai_engine import get_advanced_analysis
     
+    try:
+        analysis = await get_advanced_analysis(symbol)
+        return analysis
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/ai/analysis/{base}/{quote}")
+async def get_advanced_analysis_separated(
+    base: str,
+    quote: str,
+    current_user: dict = Depends(get_current_active_user)
+):
+    """Get advanced AI market analysis (separated symbol format)"""
+    from app.ai_engine import get_advanced_analysis
+    
+    symbol = f"{base}/{quote}"
     try:
         analysis = await get_advanced_analysis(symbol)
         return analysis
@@ -411,7 +554,7 @@ async def get_trade_history(
             "filled_price": t.filled_price,
             "status": t.status,
             "bot_type": t.bot_type,
-            "timestamp": t.timestamp.isoformat()
+            "timestamp": t.timestamp.isoformat() + 'Z' if t.timestamp and not t.timestamp.isoformat().endswith('Z') else t.timestamp.isoformat() if t.timestamp else None
         }
         for t in trades
     ]
@@ -453,16 +596,24 @@ async def start_dca_bot(
 @app.post("/api/bot/gods-hand/start")
 async def start_gods_hand(
     current_user: dict = Depends(get_current_active_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    continuous: bool = True,
+    interval_seconds: int = 60,
 ):
-    """Start Gods Hand autonomous trading"""
-    from app.bots import start_gods_hand as run_gods_hand
-    
-    config = db.query(BotConfig).filter(BotConfig.user_id == current_user["id"]).first()
-    if not config or not config.gods_hand_enabled:
-        raise HTTPException(status_code=400, detail="Gods Hand not enabled")
-    
-    result = await run_gods_hand(current_user["id"], config, db)
+    """Start Gods Hand autonomous trading (continuous by default).
+    Returns result of first run and continues in background if continuous=True.
+    """
+    from app.bots import start_gods_hand_entry
+
+    # Validate interval bounds
+    if interval_seconds < 10:
+        interval_seconds = 10
+    if interval_seconds > 3600:
+        interval_seconds = 3600
+
+    result = await start_gods_hand_entry(current_user["id"], db, continuous=continuous, interval_seconds=interval_seconds)
+    if result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "Failed to start Gods Hand"))
     return result
 
 
@@ -489,6 +640,273 @@ async def get_bot_status(
     
     status = await check_status(current_user["id"], db)
     return status
+
+
+# ----------------------------------------------------------------------------
+# Gods Hand Performance
+# ----------------------------------------------------------------------------
+@app.get("/api/bot/gods-hand/performance")
+async def gods_hand_performance(
+    days: int = 7,
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Compute performance metrics for Gods Hand trades over the last N days."""
+    from datetime import datetime, timedelta
+
+    if days < 1:
+        days = 1
+    if days > 365:
+        days = 365
+
+    since = datetime.utcnow() - timedelta(days=days)
+
+    trades = (
+        db.query(Trade)
+        .filter(Trade.user_id == current_user["id"]) 
+        .filter(Trade.bot_type == 'gods_hand')
+        .filter(Trade.timestamp >= since)
+        .order_by(Trade.timestamp.asc())
+        .all()
+    )
+
+    # Aggregate by symbol using FIFO average cost method
+    per_symbol = {}
+    realized_profit = 0.0
+    gross_profit = 0.0
+    gross_loss = 0.0
+    total_buys = 0
+    total_sells = 0
+    winning_trades = 0
+    losing_trades = 0
+
+    for t in trades:
+        sym = t.symbol
+        if sym not in per_symbol:
+            per_symbol[sym] = {
+                'position': 0.0,
+                'total_cost': 0.0,
+                'avg_cost': 0.0,
+            }
+        s = per_symbol[sym]
+
+        price = float(t.filled_price or t.price or 0)
+        amount = float(t.amount or 0)
+        if amount <= 0 or price <= 0:
+            continue
+
+        if t.side == 'BUY':
+            total_buys += 1
+            # Increase position and cost
+            s['total_cost'] += amount * price
+            s['position'] += amount
+            s['avg_cost'] = s['total_cost'] / s['position'] if s['position'] > 0 else 0.0
+        elif t.side == 'SELL':
+            total_sells += 1
+            # Realize PnL based on average cost
+            sell_amount = min(amount, s['position']) if s['position'] > 0 else 0.0
+            if sell_amount > 0:
+                pnl = (price - s['avg_cost']) * sell_amount
+                realized_profit += pnl
+                if pnl >= 0:
+                    gross_profit += pnl
+                    winning_trades += 1
+                else:
+                    gross_loss += abs(pnl)
+                    losing_trades += 1
+                # Reduce position and cost
+                s['position'] -= sell_amount
+                s['total_cost'] -= s['avg_cost'] * sell_amount
+                s['avg_cost'] = s['total_cost'] / s['position'] if s['position'] > 0 else 0.0
+
+    total_trades = total_buys + total_sells
+    net_profit = realized_profit
+    win_rate = (winning_trades / max(1, total_sells)) * 100.0
+    avg_win = (gross_profit / max(1, winning_trades)) if winning_trades > 0 else 0.0
+    avg_loss = (gross_loss / max(1, losing_trades)) if losing_trades > 0 else 0.0
+
+    # Current positions per symbol
+    positions = [
+        {
+            'symbol': sym,
+            'position': round(s['position'], 8),
+            'avg_cost': round(s['avg_cost'], 6)
+        }
+        for sym, s in per_symbol.items() if s['position'] > 0
+    ]
+
+    # Last trades (5 most recent)
+    last_trades = [
+        {
+            'timestamp': t.timestamp.isoformat() + 'Z' if t.timestamp and not t.timestamp.isoformat().endswith('Z') else t.timestamp.isoformat() if t.timestamp else None,
+            'symbol': t.symbol,
+            'side': t.side,
+            'amount': t.amount,
+            'price': t.filled_price or t.price,
+            'status': t.status,
+        }
+        for t in (
+            db.query(Trade)
+            .filter(Trade.user_id == current_user['id'])
+            .filter(Trade.bot_type == 'gods_hand')
+            .order_by(Trade.timestamp.desc())
+            .limit(5)
+            .all()
+        )
+    ]
+
+    return {
+        'since': since.isoformat(),
+        'days': days,
+        'summary': {
+            'total_trades': total_trades,
+            'buys': total_buys,
+            'sells': total_sells,
+            'winning_trades': winning_trades,
+            'losing_trades': losing_trades,
+            'win_rate': round(win_rate, 2),
+            'gross_profit': round(gross_profit, 4),
+            'gross_loss': round(gross_loss, 4),
+            'net_profit': round(net_profit, 4),
+            'avg_win': round(avg_win, 4),
+            'avg_loss': round(avg_loss, 4),
+        },
+        'positions': positions,
+        'last_trades': last_trades,
+    }
+
+
+# ============================================================================
+# LOGGING ENDPOINTS
+# ============================================================================
+
+@app.get("/api/logs")
+async def get_logs(
+    category: Optional[str] = None,
+    level: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get application logs with filtering"""
+    query = db.query(Log)
+    
+    # Filter by category
+    if category:
+        try:
+            query = query.filter(Log.category == LogCategory(category))
+        except ValueError:
+            pass
+    
+    # Filter by level
+    if level:
+        try:
+            query = query.filter(Log.level == LogLevel(level))
+        except ValueError:
+            pass
+    
+    # Order by most recent first
+    query = query.order_by(Log.timestamp.desc())
+    
+    # Apply pagination
+    total = query.count()
+    logs = query.offset(offset).limit(limit).all()
+    
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "logs": [log.to_dict() for log in logs]
+    }
+
+
+@app.get("/api/logs/categories")
+async def get_log_categories(
+    current_user: dict = Depends(get_current_active_user)
+):
+    """Get available log categories with counts"""
+    return {
+        "categories": [
+            {"value": cat.value, "label": cat.value.replace("_", " ").title()}
+            for cat in LogCategory
+        ]
+    }
+
+
+@app.get("/api/logs/ai-actions")
+async def get_ai_action_comparison(
+    limit: int = 50,
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get AI thinking vs actual actions comparison"""
+    # Get AI thinking logs
+    thinking_logs = db.query(Log).filter(
+        Log.category == LogCategory.AI_THINKING
+    ).order_by(Log.timestamp.desc()).limit(limit).all()
+    
+    # Get AI action logs
+    action_logs = db.query(Log).filter(
+        Log.category == LogCategory.AI_ACTION
+    ).order_by(Log.timestamp.desc()).limit(limit).all()
+    
+    # Create comparison
+    comparison = []
+    for thinking in thinking_logs:
+        # Find corresponding action within 1 minute
+        matching_action = next(
+            (a for a in action_logs 
+             if a.symbol == thinking.symbol 
+             and abs((a.timestamp - thinking.timestamp).total_seconds()) < 60),
+            None
+        )
+        
+        comparison.append({
+            "timestamp": thinking.timestamp.isoformat() + 'Z' if thinking.timestamp and not thinking.timestamp.isoformat().endswith('Z') else thinking.timestamp.isoformat() if thinking.timestamp else None,
+            "symbol": thinking.symbol,
+            "ai_recommendation": thinking.ai_recommendation,
+            "ai_confidence": thinking.ai_confidence,
+            "thinking_message": thinking.message,
+            "thinking_level": thinking.level.value if thinking.level else None,
+            "action_taken": matching_action.ai_executed if matching_action else "unknown",
+            "action_reason": matching_action.execution_reason if matching_action else None,
+            "action_message": matching_action.message if matching_action else None,
+            "action_level": matching_action.level.value if matching_action and matching_action.level else None,
+        })
+    
+    return {
+        "total": len(comparison),
+        "comparisons": comparison
+    }
+
+
+@app.delete("/api/logs/clear")
+async def clear_logs(
+    category: Optional[str] = None,
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Clear logs (admin only or by category)"""
+    # Only admin can clear all logs
+    if not category and not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Only admin can clear all logs")
+    
+    query = db.query(Log)
+    
+    if category:
+        try:
+            query = query.filter(Log.category == LogCategory(category))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid category")
+    
+    deleted_count = query.delete()
+    db.commit()
+    
+    return {
+        "message": f"Deleted {deleted_count} log entries",
+        "category": category if category else "all"
+    }
 
 
 if __name__ == "__main__":

@@ -81,6 +81,10 @@ class BotConfig(Base):
     position_size_ratio = Column(Float, default=0.95)
     max_daily_loss = Column(Float, default=5.0)
     
+    # Incremental Position Building (DCA into positions)
+    entry_step_percent = Column(Float, default=10.0)  # % of position_size to buy per BUY signal
+    exit_step_percent = Column(Float, default=10.0)   # % of position to sell per SELL signal
+    
     # Grid Bot Settings
     grid_enabled = Column(Boolean, default=False)
     grid_lower_price = Column(Float, nullable=True)
@@ -94,6 +98,14 @@ class BotConfig(Base):
     
     # Gods Hand Settings
     gods_hand_enabled = Column(Boolean, default=False)
+
+    # Email Notification Settings
+    notification_email = Column(String, nullable=True)
+    notify_on_action = Column(Boolean, default=False)
+    notify_on_position_size = Column(Boolean, default=False)
+    notify_on_failure = Column(Boolean, default=False)
+    gmail_user = Column(String, nullable=True)
+    gmail_app_password = Column(String, nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -114,6 +126,8 @@ class BotConfig(Base):
             'min_confidence': self.min_confidence,
             'position_size_ratio': self.position_size_ratio,
             'max_daily_loss': self.max_daily_loss,
+            'entry_step_percent': self.entry_step_percent,
+            'exit_step_percent': self.exit_step_percent,
             'grid_enabled': self.grid_enabled,
             'grid_lower_price': self.grid_lower_price,
             'grid_upper_price': self.grid_upper_price,
@@ -122,5 +136,11 @@ class BotConfig(Base):
             'dca_amount_per_period': self.dca_amount_per_period,
             'dca_interval_days': self.dca_interval_days,
             'gods_hand_enabled': self.gods_hand_enabled,
+            'notification_email': self.notification_email,
+            'notify_on_action': self.notify_on_action,
+            'notify_on_position_size': self.notify_on_position_size,
+            'notify_on_failure': self.notify_on_failure,
+            'gmail_user': self.gmail_user,
+            'gmail_app_password': '***' if self.gmail_app_password else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }

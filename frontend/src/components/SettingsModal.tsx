@@ -13,6 +13,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [apiKeys, setApiKeys] = useState({ api_key: '', api_secret: '' });
   const [newUser, setNewUser] = useState({ username: '', password: '' });
   const [loading, setLoading] = useState(false);
+  const [validating, setValidating] = useState(false);
+  const [validationResult, setValidationResult] = useState<{ ok: boolean; msg?: string; hint?: string } | null>(null);
 
   useEffect(() => {
     loadConfig();
@@ -45,10 +47,29 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       await settingsAPI.updateAPIKeys(apiKeys.api_key, apiKeys.api_secret);
       alert('API keys saved successfully!');
       setApiKeys({ api_key: '', api_secret: '' });
+      setValidationResult(null);
     } catch (error: any) {
       alert(error.response?.data?.detail || 'Failed to save API keys');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const validateKeys = async () => {
+    setValidating(true);
+    setValidationResult(null);
+    try {
+      const res = await settingsAPI.validateKeys();
+      const data = res.data;
+      if (data.ok) {
+        setValidationResult({ ok: true, msg: data.msg });
+      } else {
+        setValidationResult({ ok: false, msg: data.error, hint: data.hint });
+      }
+    } catch (err: any) {
+      setValidationResult({ ok: false, msg: err.response?.data?.detail || 'Validation failed' });
+    } finally {
+      setValidating(false);
     }
   };
 
@@ -191,6 +212,75 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                 />
               </div>
             </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.9rem' }}>
+                Position Size Ratio (%)
+                <span style={{ marginLeft: '8px', fontSize: '0.85rem', opacity: 0.7 }}>
+                  Maximum % of budget to use per trade
+                </span>
+              </label>
+              <input
+                type="number"
+                min="10"
+                max="100"
+                step="5"
+                value={(config.position_size_ratio * 100).toFixed(0)}
+                onChange={(e) => setConfig({...config, position_size_ratio: parseFloat(e.target.value) / 100})}
+                style={{ width: '100%' }}
+              />
+              <div style={{ marginTop: '6px', fontSize: '0.8rem', opacity: 0.6, lineHeight: 1.4 }}>
+                Example with ${config.budget?.toLocaleString() || '0'} budget and {config.risk_level} risk:
+                <br />
+                Max Position = ${(config.budget * (config.position_size_ratio || 0.95)).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                &nbsp;→&nbsp;
+                Actual = ${(config.budget * (config.position_size_ratio || 0.95) * (config.risk_level === 'conservative' ? 0.5 : config.risk_level === 'moderate' ? 0.75 : 1.0)).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </div>
+            </div>
+
+            <div className="grid grid-2" style={{ marginBottom: '15px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.9rem' }}>
+                  Entry Step (%)
+                  <span style={{ marginLeft: '8px', fontSize: '0.85rem', opacity: 0.7 }}>
+                    How much to buy per BUY signal
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={config.entry_step_percent || 10}
+                  onChange={(e) => setConfig({...config, entry_step_percent: parseFloat(e.target.value)})}
+                  style={{ width: '100%' }}
+                />
+                <div style={{ marginTop: '4px', fontSize: '0.75rem', opacity: 0.6 }}>
+                  10% = accumulate position gradually (DCA)
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.9rem' }}>
+                  Exit Step (%)
+                  <span style={{ marginLeft: '8px', fontSize: '0.85rem', opacity: 0.7 }}>
+                    How much to sell per SELL signal
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  step="1"
+                  value={config.exit_step_percent || 10}
+                  onChange={(e) => setConfig({...config, exit_step_percent: parseFloat(e.target.value)})}
+                  style={{ width: '100%' }}
+                />
+                <div style={{ marginTop: '4px', fontSize: '0.75rem', opacity: 0.6 }}>
+                  10% = exit position gradually (reduce risk)
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* API Keys */}
@@ -223,10 +313,38 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
               />
             </div>
 
-            <button onClick={saveAPIKeys} disabled={loading || !apiKeys.api_key || !apiKeys.api_secret}>
-              <Save size={16} />
-              Save API Keys
-            </button>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={saveAPIKeys} disabled={loading || !apiKeys.api_key || !apiKeys.api_secret}>
+                <Save size={16} />
+                Save API Keys
+              </button>
+              <button type="button" onClick={validateKeys} disabled={validating} style={{ padding: '8px 12px' }}>
+                {validating ? 'Validating…' : 'Validate Keys'}
+              </button>
+            </div>
+
+            {validationResult && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  border: `1px solid ${validationResult.ok ? 'rgba(123,170,109,0.6)' : 'rgba(217,119,87,0.6)'}`,
+                  background: validationResult.ok ? 'rgba(123,170,109,0.12)' : 'rgba(217,119,87,0.12)',
+                  color: validationResult.ok ? '#2D5D2A' : '#7A3A2C',
+                }}
+              >
+                <div style={{ fontWeight: 700, marginBottom: 4 }}>
+                  {validationResult.ok ? 'API keys are valid ✅' : 'API keys invalid ❌'}
+                </div>
+                {validationResult.msg && (
+                  <div style={{ fontSize: '0.9rem' }}>{validationResult.msg}</div>
+                )}
+                {validationResult.hint && (
+                  <div style={{ fontSize: '0.85rem', opacity: 0.85, marginTop: 4 }}>{validationResult.hint}</div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Create User (Admin Only) */}
@@ -265,6 +383,78 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
               </button>
             </div>
           )}
+
+          {/* Notification Settings */}
+          <div style={{ marginBottom: '25px' }}>
+            <h3 style={{ fontSize: '1.2rem', marginBottom: '15px' }}>Email Notifications</h3>
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.9rem' }}>
+                Notification Email Address
+              </label>
+              <input
+                type="email"
+                value={config.notification_email || ''}
+                onChange={(e) => setConfig({...config, notification_email: e.target.value})}
+                placeholder="your@email.com"
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.9rem' }}>
+                Gmail Sender Address
+              </label>
+              <input
+                type="email"
+                value={config.gmail_user || ''}
+                onChange={(e) => setConfig({...config, gmail_user: e.target.value})}
+                placeholder="sender@gmail.com"
+                style={{ width: '100%' }}
+              />
+            </div>
+            <div style={{ marginBottom: '15px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '0.9rem' }}>
+                Gmail App Password
+              </label>
+              <input
+                type="password"
+                value={config.gmail_app_password || ''}
+                onChange={(e) => setConfig({...config, gmail_app_password: e.target.value})}
+                placeholder="your app password"
+                style={{ width: '100%' }}
+              />
+              <small style={{ color: '#888' }}>Generate at: myaccount.google.com/apppasswords</small>
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={!!config.notify_on_action}
+                  onChange={e => setConfig({...config, notify_on_action: e.target.checked})}
+                />
+                Notify when AI buys or sells (multiple times)
+              </label>
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={!!config.notify_on_position_size}
+                  onChange={e => setConfig({...config, notify_on_position_size: e.target.checked})}
+                />
+                Notify when Position Size Ratio is reached (once per day)
+              </label>
+            </div>
+            <div style={{ marginBottom: '10px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={!!config.notify_on_failure}
+                  onChange={e => setConfig({...config, notify_on_failure: e.target.checked})}
+                />
+                Notify when AI failure/skipped action (once per hour)
+              </label>
+            </div>
+          </div>
         </div>
 
         {/* Save Button */}

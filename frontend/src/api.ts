@@ -63,7 +63,8 @@ export const botAPI = {
   
   startDCA: () => api.post('/bot/dca/start'),
   
-  startGodsHand: () => api.post('/bot/gods-hand/start'),
+  startGodsHand: (continuous: boolean = true, intervalSeconds: number = 60) =>
+    api.post('/bot/gods-hand/start', {}, { params: { continuous, interval_seconds: intervalSeconds } }),
   
   stopBot: (botType: string) => api.post(`/bot/${botType}/stop`),
   
@@ -76,6 +77,11 @@ export const settingsAPI = {
       binance_api_key: apiKey,
       binance_api_secret: apiSecret,
     }),
+  validateKeys: () => api.get('/settings/validate-keys'),
+};
+
+export const systemAPI = {
+  getServerInfo: () => axios.get('/'),
 };
 
 export default api;

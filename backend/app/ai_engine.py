@@ -86,6 +86,7 @@ async def get_trading_recommendation(symbol: str, config: Optional[BotConfig] = 
         # AI Decision Logic
         signals = []
         confidence_factors = []
+        signal_details = []  # Track what each indicator is saying
         
         # RSI Analysis
         rsi = indicators.get('rsi')
@@ -93,28 +94,63 @@ async def get_trading_recommendation(symbol: str, config: Optional[BotConfig] = 
             if rsi < 30:
                 signals.append('BUY')
                 confidence_factors.append(0.8)
+                signal_details.append(f"RSI={rsi:.1f} (oversold) → BUY @0.8")
             elif rsi > 70:
                 signals.append('SELL')
                 confidence_factors.append(0.8)
+                signal_details.append(f"RSI={rsi:.1f} (overbought) → SELL @0.8")
             else:
                 signals.append('HOLD')
                 confidence_factors.append(0.5)
+                signal_details.append(f"RSI={rsi:.1f} (neutral) → HOLD @0.5")
         
-        # SMA Crossover
+        # SMA Crossover and Trend Analysis (BALANCED STRATEGY)
         sma_20 = indicators.get('sma_20')
         sma_50 = indicators.get('sma_50')
         current = indicators['current_price']
         
         if sma_20 and sma_50:
-            if sma_20 > sma_50 and current > sma_20:
-                signals.append('BUY')
-                confidence_factors.append(0.7)
-            elif sma_20 < sma_50 and current < sma_20:
-                signals.append('SELL')
-                confidence_factors.append(0.7)
+            # Determine overall trend
+            is_uptrend = sma_20 > sma_50
+            is_downtrend = sma_20 < sma_50
+            
+            if is_uptrend:
+                # UPTREND: Buy on strength OR buy dips (within reason)
+                distance_from_sma20 = ((current - sma_20) / sma_20) * 100
+                
+                if current > sma_20:
+                    # Strong uptrend - price above both SMAs
+                    signals.append('BUY')
+                    confidence_factors.append(0.75)
+                    signal_details.append(f"Strong uptrend: SMA20({sma_20:.2f}) > SMA50({sma_50:.2f}), Price({current:.2f}) > SMA20 → BUY @0.75")
+                elif distance_from_sma20 > -3:  # Price within 3% below SMA20
+                    # Minor dip in uptrend - good buying opportunity
+                    signals.append('BUY')
+                    confidence_factors.append(0.70)
+                    signal_details.append(f"Dip in uptrend: Price({current:.2f}) {distance_from_sma20:.1f}% below SMA20 in uptrend → BUY @0.70")
+                else:
+                    # Too far below SMA20 - trend might be reversing
+                    signals.append('HOLD')
+                    confidence_factors.append(0.5)
+                    signal_details.append(f"Price too far below SMA20 ({distance_from_sma20:.1f}%) → HOLD @0.5")
+            
+            elif is_downtrend:
+                # DOWNTREND: Sell on weakness, avoid buying unless oversold
+                if current < sma_20:
+                    # Confirmed downtrend
+                    signals.append('SELL')
+                    confidence_factors.append(0.70)
+                    signal_details.append(f"Downtrend: SMA20({sma_20:.2f}) < SMA50({sma_50:.2f}), Price({current:.2f}) < SMA20 → SELL @0.70")
+                else:
+                    # Price above SMA20 but still in downtrend - wait and see
+                    signals.append('HOLD')
+                    confidence_factors.append(0.55)
+                    signal_details.append(f"Price above SMA20 but in downtrend → HOLD @0.55")
             else:
+                # Sideways market
                 signals.append('HOLD')
-                confidence_factors.append(0.6)
+                confidence_factors.append(0.5)
+                signal_details.append(f"Sideways market (SMAs close) → HOLD @0.5")
         
         # Bollinger Bands
         bb_upper = indicators.get('bb_upper')
@@ -124,14 +160,27 @@ async def get_trading_recommendation(symbol: str, config: Optional[BotConfig] = 
             if current <= bb_lower:
                 signals.append('BUY')
                 confidence_factors.append(0.75)
+                signal_details.append(f"Price({current:.2f}) ≤ BB_Lower({bb_lower:.2f}) → BUY @0.75")
             elif current >= bb_upper:
                 signals.append('SELL')
                 confidence_factors.append(0.75)
+                signal_details.append(f"Price({current:.2f}) ≥ BB_Upper({bb_upper:.2f}) → SELL @0.75")
+            else:
+                signal_details.append(f"Price in BB range ({bb_lower:.2f} - {bb_upper:.2f}) → no signal")
         
         # Aggregate signals
         buy_count = signals.count('BUY')
         sell_count = signals.count('SELL')
         hold_count = signals.count('HOLD')
+        
+        # Log signal breakdown for debugging
+        print(f"\n{'='*60}")
+        print(f"AI CONFIDENCE CALCULATION for {symbol}")
+        print(f"{'='*60}")
+        for detail in signal_details:
+            print(f"  • {detail}")
+        print(f"\nSignal Summary: BUY={buy_count}, SELL={sell_count}, HOLD={hold_count}")
+        print(f"Confidence factors: {confidence_factors}")
         
         if buy_count > sell_count and buy_count > hold_count:
             action = 'BUY'
@@ -142,11 +191,17 @@ async def get_trading_recommendation(symbol: str, config: Optional[BotConfig] = 
         
         # Calculate confidence
         confidence = np.mean(confidence_factors) if confidence_factors else 0.5
+        print(f"Raw Confidence: {confidence:.3f} (average of {len(confidence_factors)} factors)")
         
         # Apply user's risk settings
         min_confidence = config.min_confidence if config else 0.7
+        original_action = action
         if confidence < min_confidence:
             action = 'HOLD'
+            print(f"⚠️  Confidence {confidence:.2f} < minimum {min_confidence} → Overriding {original_action} to HOLD")
+        
+        print(f"\nFinal Decision: {action} @ {confidence:.0%} confidence")
+        print(f"{'='*60}\n")
         
         # Reasoning
         reasoning = []
@@ -162,6 +217,7 @@ async def get_trading_recommendation(symbol: str, config: Optional[BotConfig] = 
             "confidence": round(confidence, 2),
             "reasoning": reasoning,
             "indicators": indicators,
+            "signal_breakdown": signal_details,  # Add detailed breakdown to response
             "timestamp": datetime.utcnow().isoformat()
         }
         

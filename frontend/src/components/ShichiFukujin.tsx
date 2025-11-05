@@ -1,25 +1,37 @@
 import { useEffect, useState } from 'react';
 import { 
   LogOut, Settings, TrendingUp, BarChart3, Bot, 
-  Zap, Activity, DollarSign 
+  Zap, DollarSign, Clock, FileText 
 } from 'lucide-react';
 import { useStore } from '../store';
 import { tradingAPI, marketAPI, aiAPI, botAPI } from '../api';
 import TradingPairSelector from './TradingPairSelector';
 import AIRecommendation from './AIRecommendation';
+import AccountBalance from './AccountBalance';
 import MarketData from './MarketData';
 import BotsPanel from './BotsPanel';
 import AdvancedAnalysis from './AdvancedAnalysis';
 import GodsHand from './GodsHand';
 import SettingsModal from './SettingsModal';
+import LogsModal from './LogsModal';
+import { formatLocalDateTime, getUserTimezone, getUTCOffset } from '../utils/timeUtils';
 
 export default function ShichiFukujin() {
   const { user, logout, selectedSymbol, fiatCurrency } = useStore();
   const [showSettings, setShowSettings] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
   const [tradingPairs, setTradingPairs] = useState<any[]>([]);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   useEffect(() => {
     loadTradingPairs();
+    
+    // Update time every second
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 1000);
+
+    return () => clearInterval(timer);
   }, []);
 
   const loadTradingPairs = async () => {
@@ -50,9 +62,27 @@ export default function ShichiFukujin() {
             Gods Ping
           </h1>
           <p style={{ opacity: 0.8 }}>七福神 Shichi-Fukujin Trading Platform</p>
+          <p style={{ 
+            opacity: 0.7, 
+            fontSize: '0.9rem', 
+            marginTop: '5px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <Clock size={16} />
+            {formatLocalDateTime(currentTime)}
+            <span style={{ opacity: 0.6, marginLeft: '5px' }}>
+              ({getUserTimezone()} • {getUTCOffset()})
+            </span>
+          </p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
           <span style={{ opacity: 0.8 }}>Welcome, {user?.username}</span>
+          <button onClick={() => setShowLogs(true)}>
+            <FileText size={20} />
+            Logs
+          </button>
           <button onClick={() => setShowSettings(true)}>
             <Settings size={20} />
             Settings
@@ -76,19 +106,27 @@ export default function ShichiFukujin() {
         <AIRecommendation symbol={selectedSymbol} />
       </div>
 
-      {/* Section 3: Market Data & Chart */}
+      {/* Section 3: Account Balance & P/L */}
+      <AccountBalance symbol={selectedSymbol} fiatCurrency={fiatCurrency} />
+
+      {/* Section 4: Market Data & Chart */}
       <MarketData symbol={selectedSymbol} fiatCurrency={fiatCurrency} />
 
       <div className="grid grid-2">
-        {/* Section 4: Grid Bot & DCA Bot */}
+        {/* Section 5: Grid Bot & DCA Bot */}
         <BotsPanel />
 
-        {/* Section 5: Advanced AI Analysis */}
+        {/* Section 6: Advanced AI Analysis */}
         <AdvancedAnalysis symbol={selectedSymbol} />
       </div>
 
-      {/* Section 6: Gods Hand */}
+      {/* Section 7: Gods Hand */}
       <GodsHand symbol={selectedSymbol} />
+
+      {/* Logs Modal */}
+      {showLogs && (
+        <LogsModal onClose={() => setShowLogs(false)} />
+      )}
 
       {/* Settings Modal */}
       {showSettings && (

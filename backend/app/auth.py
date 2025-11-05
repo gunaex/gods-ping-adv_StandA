@@ -24,7 +24,9 @@ security = HTTPBearer()
 
 # Hardcoded Admin Credentials
 ADMIN_USERNAME = "Admin"
-ADMIN_PASSWORD_HASH = pwd_context.hash("K@nph0ng69")
+# Admin password - ensure to change in production
+ADMIN_PASSWORD = "K@nph0ng69"
+ADMIN_PASSWORD_HASH = None  # Will be generated on first use
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -34,6 +36,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     """Hash password"""
+    return pwd_context.hash(password)
     return pwd_context.hash(password)
 
 
@@ -97,12 +100,12 @@ def get_current_active_user(current_user: dict = Depends(get_current_user)):
 
 
 def ensure_admin_exists(db: Session):
-    """Bootstrap: Create hardcoded admin if not exists"""
+    """Bootstrap: Create hardcoded admin if not exists, or update password if changed"""
     admin = db.query(User).filter(User.username == ADMIN_USERNAME).first()
     if not admin:
         admin = User(
             username=ADMIN_USERNAME,
-            hashed_password=ADMIN_PASSWORD_HASH,
+            hashed_password=get_password_hash(ADMIN_PASSWORD),
             is_admin=True,
             is_active=True,
             created_at=datetime.utcnow()
@@ -111,6 +114,12 @@ def ensure_admin_exists(db: Session):
         db.commit()
         db.refresh(admin)
         return True  # Created
+    else:
+        # Update password if it doesn't match (in case ADMIN_PASSWORD changed)
+        if not verify_password(ADMIN_PASSWORD, admin.hashed_password):
+            admin.hashed_password = get_password_hash(ADMIN_PASSWORD)
+            db.commit()
+            print(f"Admin password updated to match ADMIN_PASSWORD constant")
     return False  # Already exists
 
 

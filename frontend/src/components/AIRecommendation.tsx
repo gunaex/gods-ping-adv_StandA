@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Lightbulb, RefreshCw } from 'lucide-react';
 import { aiAPI } from '../api';
+import { colors } from '../theme/colors';
 
 interface AIRecommendationProps {
   symbol: string;
@@ -28,9 +29,25 @@ export default function AIRecommendation({ symbol }: AIRecommendationProps) {
 
   const getActionColor = (action: string) => {
     switch (action) {
-      case 'BUY': return '#4ade80';
-      case 'SELL': return '#f87171';
-      default: return '#fbbf24';
+      case 'BUY': return colors.trading.buy.color;
+      case 'SELL': return colors.trading.sell.color;
+      default: return colors.trading.neutral.color;
+    }
+  };
+
+  const getActionBg = (action: string) => {
+    switch (action) {
+      case 'BUY': return colors.trading.buy.bg;
+      case 'SELL': return colors.trading.sell.bg;
+      default: return colors.trading.neutral.bg;
+    }
+  };
+
+  const getActionShape = (action: string) => {
+    switch (action) {
+      case 'BUY': return colors.trading.buy.shape;
+      case 'SELL': return colors.trading.sell.shape;
+      default: return colors.trading.neutral.shape;
     }
   };
 
@@ -56,14 +73,14 @@ export default function AIRecommendation({ symbol }: AIRecommendationProps) {
         <div>
           <div style={{
             padding: '20px',
-            background: `linear-gradient(135deg, ${getActionColor(recommendation.action)}22, ${getActionColor(recommendation.action)}11)`,
+            background: getActionBg(recommendation.action),
             borderRadius: '8px',
             border: `2px solid ${getActionColor(recommendation.action)}`,
             marginBottom: '15px',
           }}>
             <div style={{ fontSize: '0.9rem', opacity: 0.8 }}>Action</div>
             <div style={{ fontSize: '2rem', fontWeight: 'bold', color: getActionColor(recommendation.action) }}>
-              {recommendation.action}
+              {getActionShape(recommendation.action)} {recommendation.action}
             </div>
           </div>
 

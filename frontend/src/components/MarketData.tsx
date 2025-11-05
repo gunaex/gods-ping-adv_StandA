@@ -13,6 +13,7 @@ export default function MarketData({ symbol, fiatCurrency }: MarketDataProps) {
   const [candles, setCandles] = useState<any[]>([]);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
+  const seriesRef = useRef<any>(null);
 
   useEffect(() => {
     loadMarketData();
@@ -20,9 +21,83 @@ export default function MarketData({ symbol, fiatCurrency }: MarketDataProps) {
     return () => clearInterval(interval);
   }, [symbol]);
 
+  // Initialize chart on mount / symbol change
   useEffect(() => {
-    if (candles.length > 0 && chartContainerRef.current) {
-      renderChart();
+    if (!chartContainerRef.current) return;
+
+    // Dispose previous chart if any
+    if (chartRef.current) {
+      try { chartRef.current.remove(); } catch {}
+      chartRef.current = null;
+      seriesRef.current = null;
+    }
+
+    const chart = createChart(chartContainerRef.current, {
+      layout: {
+        background: { type: ColorType.Solid, color: 'transparent' },
+        // Set X and Y axis text (tick labels) to dark gray
+        textColor: '#6b7280', // dark gray
+      },
+      width: chartContainerRef.current.clientWidth,
+      height: 400,
+      grid: {
+        vertLines: { color: 'rgba(255, 255, 255, 0.1)' },
+        horzLines: { color: 'rgba(255, 255, 255, 0.1)' },
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(107, 114, 128, 0.4)', // subtle dark gray axis line
+      },
+      timeScale: {
+        borderColor: 'rgba(107, 114, 128, 0.4)', // subtle dark gray axis line
+      },
+    });
+
+    const candlestickSeries = chart.addCandlestickSeries({
+      upColor: '#4ade80',
+      downColor: '#f87171',
+      borderVisible: false,
+      wickUpColor: '#4ade80',
+      wickDownColor: '#f87171',
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = candlestickSeries;
+
+    const handleResize = () => {
+      if (chartContainerRef.current && chartRef.current) {
+        chartRef.current.applyOptions({
+          width: chartContainerRef.current.clientWidth,
+        });
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (chartRef.current) {
+        try { chartRef.current.remove(); } catch {}
+        chartRef.current = null;
+        seriesRef.current = null;
+      }
+    };
+  }, [symbol]);
+
+  // Update series data when candles change
+  useEffect(() => {
+    if (!seriesRef.current) return;
+    const formattedCandles = candles.map(c => ({
+      time: c.timestamp / 1000,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+    }));
+    try {
+      seriesRef.current.setData(formattedCandles);
+      chartRef.current?.timeScale().fitContent();
+    } catch (e) {
+      // Ignore updates if chart was disposed between renders
+      console.warn('Chart update skipped:', e);
     }
   }, [candles]);
 
@@ -39,60 +114,7 @@ export default function MarketData({ symbol, fiatCurrency }: MarketDataProps) {
     }
   };
 
-  const renderChart = () => {
-    if (!chartContainerRef.current) return;
-
-    // Clear existing chart
-    if (chartRef.current) {
-      chartRef.current.remove();
-    }
-
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#ffffff',
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: 400,
-      grid: {
-        vertLines: { color: 'rgba(255, 255, 255, 0.1)' },
-        horzLines: { color: 'rgba(255, 255, 255, 0.1)' },
-      },
-    });
-
-    const candlestickSeries = chart.addCandlestickSeries({
-      upColor: '#4ade80',
-      downColor: '#f87171',
-      borderVisible: false,
-      wickUpColor: '#4ade80',
-      wickDownColor: '#f87171',
-    });
-
-    const formattedCandles = candles.map(c => ({
-      time: c.timestamp / 1000,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-
-    candlestickSeries.setData(formattedCandles);
-    chart.timeScale().fitContent();
-
-    chartRef.current = chart;
-
-    // Handle resize
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({
-          width: chartContainerRef.current.clientWidth,
-        });
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  };
+  // Removed renderChart; chart lifecycle handled in effects above
 
   return (
     <div className="section-card">

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Zap, Play, StopCircle, AlertTriangle, Shield, DollarSign } from 'lucide-react';
+import { Zap, Play, StopCircle, AlertTriangle, Settings } from 'lucide-react';
 import { botAPI } from '../api';
+import { colors, typography } from '../theme/colors';
 
 interface GodsHandProps {
   symbol: string;
@@ -11,11 +12,21 @@ export default function GodsHand({ symbol }: GodsHandProps) {
   const [status, setStatus] = useState<any>(null);
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [continuous, setContinuous] = useState<boolean>(() => {
+    const saved = localStorage.getItem('godsHand.continuous');
+    return saved ? saved === 'true' : true;
+  });
+  const [intervalSeconds, setIntervalSeconds] = useState<number>(() => {
+    const saved = localStorage.getItem('godsHand.intervalSeconds');
+    const n = saved ? parseInt(saved) : 60;
+    return isNaN(n) ? 60 : n;
+  });
 
   useEffect(() => {
     loadConfig();
     loadStatus();
-  }, []);
+  }, [symbol]);
 
   const loadConfig = async () => {
     try {
@@ -39,7 +50,7 @@ export default function GodsHand({ symbol }: GodsHandProps) {
     setLoading(true);
     try {
       await botAPI.updateConfig({ gods_hand_enabled: true });
-      const response = await botAPI.startGodsHand();
+      const response = await botAPI.startGodsHand(continuous, intervalSeconds);
       setResult(response.data);
       loadStatus();
     } catch (error: any) {
@@ -65,76 +76,110 @@ export default function GodsHand({ symbol }: GodsHandProps) {
       <div className="section-title">
         <Zap />
         Gods Hand - AI Autonomous Trading
+        <button 
+          onClick={() => setShowSettings(true)}
+          style={{ 
+            marginLeft: 'auto',
+            padding: '8px 16px',
+            background: colors.background.card,
+            border: `1px solid ${colors.border.default}`,
+            borderRadius: typography.borderRadius.md,
+            color: colors.text.primary
+          }}
+        >
+          <Settings size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+          Settings
+        </button>
       </div>
 
       <div className="grid grid-2" style={{ marginBottom: '20px' }}>
         {/* Current Config */}
         {config && (
-          <div style={{ padding: '15px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px' }}>
-            <h3 style={{ marginBottom: '10px', fontSize: '1.1rem' }}>Current Configuration</h3>
-            <div style={{ fontSize: '0.9rem', lineHeight: '1.8' }}>
-              <div>Symbol: <strong>{config.symbol}</strong></div>
-              <div>Budget: <strong>${config.budget}</strong></div>
-              <div>Risk Level: <strong>{config.risk_level}</strong></div>
-              <div>Min Confidence: <strong>{(config.min_confidence * 100).toFixed(0)}%</strong></div>
-              <div>Paper Trading: <strong style={{ color: config.paper_trading ? '#4ade80' : '#f87171' }}>
-                {config.paper_trading ? 'ON' : 'OFF'}
-              </strong></div>
-            </div>
-          </div>
-        )}
-
-        {/* Risk Assessment */}
-        {result?.risk_assessment && (
-          <div style={{ padding: '15px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px' }}>
-            <h3 style={{ marginBottom: '10px', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Shield size={18} />
-              Risk Assessment
+          <div style={{ 
+            padding: '20px', 
+            background: colors.background.card, 
+            borderRadius: typography.borderRadius.md,
+            border: `1px solid ${colors.border.subtle}`,
+            boxShadow: colors.shadow.sm
+          }}>
+            <h3 style={{ 
+              marginBottom: '15px', 
+              fontSize: '1.1rem',
+              color: colors.text.primary,
+              fontWeight: 700
+            }}>
+              Current Configuration
             </h3>
-            <div style={{ fontSize: '0.9rem', lineHeight: '1.8' }}>
-              <div>Risk Score: <strong>{result.risk_assessment.risk_score}/100</strong></div>
-              <div>Volatility: <strong>{result.risk_assessment.volatility}%</strong></div>
-              <div>Position Size: <strong>${result.risk_assessment.recommended_position_size}</strong></div>
-            </div>
-          </div>
-        )}
-
-        {/* Fee Protection */}
-        {result?.risk_assessment && (
-          <div style={{ padding: '15px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px' }}>
-            <h3 style={{ marginBottom: '10px', fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <DollarSign size={18} />
-              Fee Protection
-            </h3>
-            <div style={{ fontSize: '0.9rem', lineHeight: '1.8' }}>
-              <div>Estimated Fees: <strong>${result.risk_assessment.estimated_fees?.toFixed(2)}</strong></div>
-              <div>Max Daily Loss: <strong>{result.risk_assessment.max_daily_loss}%</strong></div>
+            <div style={{ fontSize: '0.95rem', lineHeight: '2', color: colors.text.secondary }}>
+              <div>Symbol: <strong style={{ color: colors.text.primary }}>{config.symbol}</strong></div>
+              <div>Budget: <strong style={{ color: colors.primary.clay }}>${config.budget}</strong></div>
+              <div>Risk Level: <strong style={{ color: colors.text.primary }}>{config.risk_level}</strong></div>
+              <div>Min Confidence: <strong style={{ color: colors.text.primary }}>{(config.min_confidence * 100).toFixed(0)}%</strong></div>
+              <div>
+                Paper Trading: 
+                <strong style={{ 
+                  color: config.paper_trading ? colors.status.warning.color : colors.trading.buy.color,
+                  marginLeft: '8px'
+                }}>
+                  {config.paper_trading ? '📝 PAPER' : '💰 REAL'}
+                </strong>
+              </div>
             </div>
           </div>
         )}
 
         {/* Last Result */}
         {result && (
-          <div style={{ padding: '15px', background: 'rgba(0, 0, 0, 0.2)', borderRadius: '8px' }}>
-            <h3 style={{ marginBottom: '10px', fontSize: '1.1rem' }}>Last Action</h3>
+          <div style={{ 
+            padding: '20px', 
+            background: colors.background.card,
+            borderRadius: typography.borderRadius.md,
+            border: `1px solid ${colors.border.subtle}`,
+            boxShadow: colors.shadow.sm
+          }}>
+            <h3 style={{ 
+              marginBottom: '15px', 
+              fontSize: '1.1rem',
+              color: colors.text.primary,
+              fontWeight: 700
+            }}>
+              Last Action
+            </h3>
             <div style={{
-              padding: '15px',
-              background: result.action === 'HOLD' ? 'rgba(251, 191, 36, 0.1)' :
-                         result.action === 'BUY' ? 'rgba(74, 222, 128, 0.1)' :
-                         'rgba(248, 113, 113, 0.1)',
-              borderRadius: '8px',
+              padding: '20px',
+              background: result.action === 'HOLD' ? colors.trading.neutral.bg :
+                         result.action === 'BUY' ? colors.trading.buy.bg :
+                         colors.trading.sell.bg,
+              borderRadius: typography.borderRadius.md,
               border: `2px solid ${
-                result.action === 'HOLD' ? '#fbbf24' :
-                result.action === 'BUY' ? '#4ade80' : '#f87171'
+                result.action === 'HOLD' ? colors.trading.neutral.border :
+                result.action === 'BUY' ? colors.trading.buy.border : 
+                colors.trading.sell.border
               }`,
             }}>
-              <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-                {result.action}
+              <div style={{ 
+                fontSize: '1.8rem', 
+                fontWeight: 'bold',
+                  color: (result.action || (result.status === 'hold' ? 'HOLD' : result?.recommendation?.action)) === 'HOLD' ? colors.trading.neutral.color :
+                         (result.action || (result.status === 'hold' ? 'HOLD' : result?.recommendation?.action)) === 'BUY' ? colors.trading.buy.color : 
+                         colors.trading.sell.color,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px'
+              }}>
+                  {(result.action || (result.status === 'hold' ? 'HOLD' : result?.recommendation?.action)) === 'BUY' && colors.trading.buy.shape}
+                  {(result.action || (result.status === 'hold' ? 'HOLD' : result?.recommendation?.action)) === 'SELL' && colors.trading.sell.shape}
+                  {(result.action || (result.status === 'hold' ? 'HOLD' : result?.recommendation?.action)) === 'HOLD' && colors.trading.neutral.shape}
+                  {result.action || (result.status === 'hold' ? 'HOLD' : (result?.recommendation?.action || 'HOLD'))}
               </div>
-              <div style={{ fontSize: '0.9rem', opacity: 0.8, marginTop: '5px' }}>
-                Confidence: {(result.confidence * 100).toFixed(0)}%
-              </div>
-              <div style={{ fontSize: '0.9rem', marginTop: '10px' }}>
+                <div style={{ fontSize: '0.95rem', color: colors.text.secondary, marginTop: '8px' }}>
+                  {(() => {
+                    const conf = typeof result.confidence === 'number' ? result.confidence : (result?.recommendation?.confidence);
+                    const text = typeof conf === 'number' ? `${(conf * 100).toFixed(0)}%` : '-';
+                    return (<span>Confidence: {text}</span>);
+                  })()}
+                </div>
+              <div style={{ fontSize: '0.95rem', marginTop: '12px', color: colors.text.primary }}>
                 {result.message}
               </div>
             </div>
@@ -144,33 +189,41 @@ export default function GodsHand({ symbol }: GodsHandProps) {
 
       {/* Controls */}
       <div style={{
-        padding: '20px',
-        background: 'rgba(0, 0, 0, 0.3)',
-        borderRadius: '8px',
+        padding: '24px',
+        background: colors.background.secondary,
+        borderRadius: typography.borderRadius.md,
         display: 'flex',
-        gap: '10px',
+        gap: '15px',
         alignItems: 'center',
         justifyContent: 'space-between',
+        border: `1px solid ${colors.border.default}`,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div style={{
-            width: '12px',
-            height: '12px',
-            borderRadius: '50%',
-            background: status?.gods_hand === 'running' ? '#4ade80' : '#6b7280',
+            width: '14px',
+            height: '14px',
+            borderRadius: typography.borderRadius.round,
+            background: status?.gods_hand === 'running' ? colors.trading.buy.color : colors.text.muted,
+            boxShadow: status?.gods_hand === 'running' ? `0 0 12px ${colors.trading.buy.color}` : 'none',
           }} />
-          <span style={{ fontSize: '0.9rem', opacity: 0.8 }}>
+          <span style={{ fontSize: '1rem', color: colors.text.primary, fontWeight: 600 }}>
             Status: {status?.gods_hand || 'stopped'}
           </span>
         </div>
 
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '12px' }}>
           <button onClick={startGodsHand} disabled={loading || status?.gods_hand === 'running'}>
-            <Play size={16} />
+            <Play size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
             Execute Now
           </button>
-          <button onClick={stopGodsHand} disabled={status?.gods_hand !== 'running'}>
-            <StopCircle size={16} />
+          <button 
+            onClick={stopGodsHand} 
+            disabled={status?.gods_hand !== 'running'}
+            style={{
+              background: `linear-gradient(135deg, ${colors.status.error.color} 0%, ${colors.primary.warmRed} 100%)`,
+            }}
+          >
+            <StopCircle size={16} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
             Stop
           </button>
         </div>
@@ -179,20 +232,291 @@ export default function GodsHand({ symbol }: GodsHandProps) {
       {config?.paper_trading && (
         <div style={{
           marginTop: '15px',
-          padding: '10px',
-          background: 'rgba(251, 191, 36, 0.1)',
-          borderRadius: '8px',
-          border: '1px solid #fbbf24',
+          padding: '16px',
+          background: colors.status.warning.bg,
+          borderRadius: typography.borderRadius.md,
+          border: `1.5px solid ${colors.status.warning.border}`,
           display: 'flex',
           alignItems: 'center',
-          gap: '8px',
+          gap: '10px',
         }}>
-          <AlertTriangle size={16} color="#fbbf24" />
-          <span style={{ fontSize: '0.9rem' }}>
-            Paper Trading Mode Active - No real trades will be executed
+          <AlertTriangle size={20} color={colors.status.warning.color} />
+          <span style={{ fontSize: '1rem', color: colors.text.primary, fontWeight: 600 }}>
+            📝 Paper Trading Mode Active - No real trades will be executed
           </span>
         </div>
       )}
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <GodsHandSettingsModal
+          config={config}
+          continuous={continuous}
+          intervalSeconds={intervalSeconds}
+          onClose={() => setShowSettings(false)}
+          onSave={async (newConfig: any) => {
+            try {
+              await botAPI.updateConfig(newConfig);
+              await loadConfig();
+              setShowSettings(false);
+            } catch (error) {
+              alert('Failed to save settings');
+            }
+          }}
+          onSaveRunSettings={(cont: boolean, interval: number) => {
+            setContinuous(cont);
+            setIntervalSeconds(interval);
+            localStorage.setItem('godsHand.continuous', String(cont));
+            localStorage.setItem('godsHand.intervalSeconds', String(interval));
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Settings Modal Component
+function GodsHandSettingsModal({ config, onClose, onSave, onSaveRunSettings, continuous, intervalSeconds }: any) {
+  const [settings, setSettings] = useState({
+    paper_trading: config?.paper_trading || false,
+    budget: config?.budget || 1000,
+    risk_level: config?.risk_level || 'medium',
+    min_confidence: config?.min_confidence || 0.7,
+    gods_hand_enabled: config?.gods_hand_enabled || false,
+  });
+
+  const [runSettings, setRunSettings] = useState({
+    continuous: typeof continuous === 'boolean' ? continuous : true,
+    intervalSeconds: intervalSeconds || 60,
+  });
+
+  return (
+    <div style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      background: colors.background.overlay,
+      backdropFilter: 'blur(8px)',
+      display: 'flex',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 1000,
+      padding: '20px'
+    }}>
+      <div style={{
+        background: `linear-gradient(135deg, ${colors.background.primary} 0%, ${colors.background.secondary} 100%)`,
+        borderRadius: typography.borderRadius.xl,
+        width: '100%',
+        maxWidth: '600px',
+        padding: '32px',
+        boxShadow: colors.shadow.lg,
+        border: `1px solid ${colors.border.default}`,
+      }}>
+        <h2 style={{ 
+          margin: '0 0 24px 0', 
+          fontSize: '1.8rem',
+          color: colors.text.primary,
+          fontWeight: 700,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <Settings size={28} color={colors.primary.warmRed} />
+          Gods Hand Settings
+        </h2>
+
+        {/* Paper Trading Toggle */}
+        <div style={{
+          padding: '20px',
+          background: settings.paper_trading ? colors.status.warning.bg : colors.trading.buy.bg,
+          border: `2px solid ${settings.paper_trading ? colors.status.warning.border : colors.trading.buy.border}`,
+          borderRadius: typography.borderRadius.md,
+          marginBottom: '20px',
+          cursor: 'pointer',
+        }}
+        onClick={() => setSettings({ ...settings, paper_trading: !settings.paper_trading })}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: colors.text.primary, marginBottom: '6px' }}>
+                {settings.paper_trading ? '📝 Paper Trading' : '💰 Real Trading'}
+              </div>
+              <div style={{ fontSize: '0.9rem', color: colors.text.secondary }}>
+                {settings.paper_trading 
+                  ? 'Simulate trades without real money'
+                  : 'Execute real trades with your funds'}
+              </div>
+            </div>
+            <div style={{
+              width: '60px',
+              height: '32px',
+              background: settings.paper_trading ? colors.status.warning.color : colors.trading.buy.color,
+              borderRadius: '16px',
+              position: 'relative',
+              transition: 'all 0.3s ease',
+            }}>
+              <div style={{
+                width: '28px',
+                height: '28px',
+                background: colors.background.primary,
+                borderRadius: '50%',
+                position: 'absolute',
+                top: '2px',
+                left: settings.paper_trading ? '2px' : '30px',
+                transition: 'all 0.3s ease',
+                boxShadow: colors.shadow.sm
+              }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Budget */}
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ 
+            display: 'block', 
+            marginBottom: '10px',
+            color: colors.text.primary,
+            fontWeight: 600,
+            fontSize: '1rem'
+          }}>
+            Trading Budget ($)
+          </label>
+          <input 
+            type="number"
+            value={settings.budget}
+            onChange={(e) => setSettings({ ...settings, budget: parseFloat(e.target.value) })}
+          />
+        </div>
+
+        {/* Risk Level */}
+        <div style={{ marginBottom: '20px' }}>
+          <label style={{ 
+            display: 'block', 
+            marginBottom: '10px',
+            color: colors.text.primary,
+            fontWeight: 600,
+            fontSize: '1rem'
+          }}>
+            Risk Level
+          </label>
+          <select
+            value={settings.risk_level}
+            onChange={(e) => setSettings({ ...settings, risk_level: e.target.value })}
+          >
+            <option value="low">🛡️ Low - Conservative</option>
+            <option value="medium">⚖️ Medium - Balanced</option>
+            <option value="high">⚡ High - Aggressive</option>
+          </select>
+        </div>
+
+        {/* Min Confidence */}
+        <div style={{ marginBottom: '28px' }}>
+          <label style={{ 
+            display: 'block', 
+            marginBottom: '10px',
+            color: colors.text.primary,
+            fontWeight: 600,
+            fontSize: '1rem'
+          }}>
+            Minimum Confidence: {(settings.min_confidence * 100).toFixed(0)}%
+          </label>
+          <input 
+            type="range"
+            min="0.5"
+            max="0.95"
+            step="0.05"
+            value={settings.min_confidence}
+            onChange={(e) => setSettings({ ...settings, min_confidence: parseFloat(e.target.value) })}
+            style={{
+              width: '100%',
+              height: '8px',
+              borderRadius: '4px',
+              background: `linear-gradient(to right, ${colors.trading.sell.color} 0%, ${colors.status.warning.color} 50%, ${colors.trading.buy.color} 100%)`,
+              cursor: 'pointer'
+            }}
+          />
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between',
+            fontSize: '0.85rem',
+            color: colors.text.secondary,
+            marginTop: '6px'
+          }}>
+            <span>50% - Risky</span>
+            <span>95% - Very Safe</span>
+          </div>
+        </div>
+
+        {/* Continuous Mode & Interval */}
+        <div style={{
+          padding: '16px',
+          background: colors.background.secondary,
+          borderRadius: typography.borderRadius.md,
+          border: `1px solid ${colors.border.subtle}`,
+          marginBottom: '20px'
+        }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <div style={{ color: colors.text.primary, fontWeight: 600 }}>Continuous Mode</div>
+            <input
+              type="checkbox"
+              checked={runSettings.continuous}
+              onChange={(e) => setRunSettings({ ...runSettings, continuous: e.target.checked })}
+            />
+          </div>
+
+          <div>
+            <label style={{
+              display: 'block', marginBottom: '8px', color: colors.text.secondary
+            }}>
+              Interval (seconds)
+            </label>
+            <select
+              value={runSettings.intervalSeconds}
+              onChange={(e) => setRunSettings({ ...runSettings, intervalSeconds: parseInt(e.target.value) })}
+              style={{ width: '100%' }}
+            >
+              <option value={30}>30</option>
+              <option value={60}>60</option>
+              <option value={120}>120</option>
+              <option value={300}>300</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Buttons */}
+        <div style={{ display: 'flex', gap: '12px' }}>
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1,
+              padding: '14px',
+              background: colors.background.secondary,
+              color: colors.text.primary,
+              border: `1.5px solid ${colors.border.default}`,
+              borderRadius: typography.borderRadius.md,
+              fontSize: '1rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => { onSave(settings); onSaveRunSettings(runSettings.continuous, runSettings.intervalSeconds); }}
+            style={{
+              flex: 1,
+              padding: '14px',
+              borderRadius: typography.borderRadius.md,
+              fontSize: '1rem',
+              fontWeight: 600
+            }}
+          >
+            Save Settings
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

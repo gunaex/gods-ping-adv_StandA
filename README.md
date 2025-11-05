@@ -39,15 +39,17 @@ npm run dev
 
 ## Tech Stack
 
-- **Backend**: FastAPI, PostgreSQL, ccxt (Binance API)
-- **Frontend**: React, TypeScript, Vite, lightweight-charts
-- **AI**: Custom trading algorithms with risk management
+- Backend: FastAPI, SQLAlchemy, SQLite (default) or PostgreSQL
+- Exchange: Native Binance Thailand REST client (no ccxt required for TH)
+- Frontend: React, TypeScript, Vite, lightweight-charts
+- AI: Custom trading algorithms with risk management
 
 ## Environment Variables
 
 ### Backend (.env)
 ```
-DATABASE_URL=postgresql://user:pass@localhost/gods_ping
+# Defaults to SQLite file ./gods_ping.db if not set
+DATABASE_URL=sqlite:///./gods_ping.db
 BINANCE_API_KEY=your_key
 BINANCE_API_SECRET=your_secret
 SECRET_KEY=your_jwt_secret
@@ -63,3 +65,11 @@ VITE_API_URL=http://localhost:8000/api
 ## License
 
 Private - For authorized use only
+
+## API Notes
+
+- Validate Binance TH keys: GET /api/settings/validate-keys
+- Gods Hand start: POST /api/bot/gods-hand/start?continuous=true&interval_seconds=60
+- Gods Hand status: GET /api/bot/status
+- Gods Hand performance: GET /api/bot/gods-hand/performance?days=7
+	- Returns summary (win rate, net/gross PnL, counts), open positions, and last 5 trades for bot_type=gods_hand.
