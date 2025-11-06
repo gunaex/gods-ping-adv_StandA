@@ -66,6 +66,32 @@ VITE_API_URL=http://localhost:8000/api
 
 Private - For authorized use only
 
+---
+
+## 🚀 Deployment
+
+Ready to deploy to production? See detailed guides:
+
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Complete deployment guide for Render + Vercel
+- **[DEPLOYMENT_CHECKLIST.md](DEPLOYMENT_CHECKLIST.md)** - Step-by-step checklist
+
+### Quick Deploy
+
+**Backend (Render):**
+1. Push to GitHub
+2. Connect repository to Render
+3. Set environment variables
+4. Deploy!
+
+**Frontend (Vercel):**
+1. Connect repository to Vercel
+2. Set `VITE_API_URL` to your Render backend URL
+3. Deploy!
+
+**Free Hosting:** Both Render and Vercel offer free tiers! 🎉
+
+---
+
 ## API Notes
 
 - Validate Binance TH keys: GET /api/settings/validate-keys
@@ -73,3 +99,5 @@ Private - For authorized use only
 - Gods Hand status: GET /api/bot/status
 - Gods Hand performance: GET /api/bot/gods-hand/performance?days=7
 	- Returns summary (win rate, net/gross PnL, counts), open positions, and last 5 trades for bot_type=gods_hand.
+- Reset paper trading: POST /api/bot/paper-trading/reset?symbol=BTC/USDT
+- Price forecast: GET /api/market/forecast/BTC/USDT?forecast_hours=6
