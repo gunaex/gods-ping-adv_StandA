@@ -97,6 +97,14 @@ class TradeRequest(BaseModel):
     price: Optional[float] = None
 
 
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    is_admin: bool
+    is_active: bool
+    created_at: Optional[str] = None
+
+
 # Startup Event
 @app.on_event("startup")
 async def startup_event():
@@ -194,6 +202,63 @@ async def create_user(
     db.commit()
     
     return {"message": "User created successfully", "user": new_user.to_dict()}
+
+
+@app.get("/api/auth/users", response_model=List[UserResponse])
+async def list_users(
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Admin-only: List users (minimal fields)."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Only admin can list users")
+
+    users = db.query(User).order_by(User.id.asc()).all()
+    result = []
+    for u in users:
+        result.append({
+            "id": u.id,
+            "username": u.username,
+            "is_admin": bool(u.is_admin),
+            "is_active": bool(u.is_active),
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        })
+    return result
+
+
+@app.delete("/api/auth/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Admin-only: Delete a non-admin user and related data (trades, bot_config)."""
+    if not current_user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Only admin can delete users")
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.is_admin:
+        raise HTTPException(status_code=400, detail="Cannot delete admin user")
+
+    # Delete related entities first due to FK constraints (no cascade configured)
+    # Delete trades
+    trades_deleted = db.query(Trade).filter(Trade.user_id == user.id).delete()
+    # Delete bot config
+    bot_config_deleted = db.query(BotConfig).filter(BotConfig.user_id == user.id).delete()
+
+    # Finally delete user
+    db.delete(user)
+    db.commit()
+
+    return {
+        "message": "User deleted",
+        "user_id": user_id,
+        "trades_deleted": trades_deleted,
+        "bot_configs_deleted": bot_config_deleted,
+    }
 
 
 @app.get("/api/auth/me")

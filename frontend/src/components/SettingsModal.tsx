@@ -15,9 +15,14 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(false);
   const [validationResult, setValidationResult] = useState<{ ok: boolean; msg?: string; hint?: string } | null>(null);
+  const [users, setUsers] = useState<any[]>([]);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     loadConfig();
+    if (user?.is_admin) {
+      loadUsers();
+    }
   }, []);
 
   const loadConfig = async () => {
@@ -38,6 +43,15 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       alert(error.response?.data?.detail || 'Failed to save settings');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const res = await authAPI.listUsers();
+      setUsers(res.data || []);
+    } catch (e) {
+      // silently ignore
     }
   };
 
@@ -79,10 +93,25 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       await authAPI.createUser(newUser.username, newUser.password);
       alert('User created successfully!');
       setNewUser({ username: '', password: '' });
+      await loadUsers();
     } catch (error: any) {
       alert(error.response?.data?.detail || 'Failed to create user');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const deleteAdditionalUser = async (userId: number, username: string) => {
+    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+    setDeleting(true);
+    try {
+      await authAPI.deleteUser(userId);
+      alert('User deleted');
+      await loadUsers();
+    } catch (error: any) {
+      alert(error.response?.data?.detail || 'Failed to delete user');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -410,6 +439,31 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
               <button onClick={createUser} disabled={loading || !newUser.username || !newUser.password}>
                 Create User
               </button>
+
+              {/* Existing Additional User Management */}
+              <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+                <div style={{ fontSize: '0.95rem', marginBottom: 8, opacity: 0.9 }}>Existing Additional User</div>
+                {users.filter(u => !u.is_admin).length === 0 ? (
+                  <div style={{ fontSize: '0.85rem', opacity: 0.75 }}>No additional user created yet.</div>
+                ) : (
+                  users.filter(u => !u.is_admin).map(u => (
+                    <div key={u.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 12px', background: 'rgba(255,255,255,0.06)', borderRadius: 8, marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{u.username}</div>
+                        <div style={{ fontSize: '0.8rem', opacity: 0.7 }}>Created: {u.created_at ? new Date(u.created_at).toLocaleString() : '-'}</div>
+                      </div>
+                      <button
+                        onClick={() => deleteAdditionalUser(u.id, u.username)}
+                        disabled={deleting}
+                        style={{ background: 'rgba(239,68,68,0.2)', borderColor: 'rgba(239,68,68,0.5)' }}
+                        title="Delete additional user"
+                      >
+                        Delete User
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
 

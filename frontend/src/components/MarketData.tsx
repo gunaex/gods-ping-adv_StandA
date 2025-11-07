@@ -201,21 +201,39 @@ export default function MarketData({ symbol }: MarketDataProps) {
     try {
       // Get current price from last candle
       const lastCandle = candles[candles.length - 1];
-      if (!lastCandle || !forecast.forecast) return;
+      if (!lastCandle) return;
 
       const currentTime = lastCandle.timestamp / 1000;
       const currentPrice = lastCandle.close;
 
-      // Build forecast line data: start from current price, extend to predictions
+      // Support multiple possible shapes from backend: forecasts (preferred) or forecast/predictions
+      const points = (forecast.forecasts || forecast.forecast || forecast.predictions || []) as any[];
+      if (!Array.isArray(points) || points.length === 0) {
+        // Nothing to plot
+        forecastSeriesRef.current.setData([]);
+        return;
+      }
+
+      // Backend provides 'hour' and 'predicted_price'. If timestamp provided, prefer it.
+      const computed = points.map((f: any) => {
+        const ts = f.timestamp ? (typeof f.timestamp === 'number' ? f.timestamp : Date.parse(f.timestamp) / 1000) : currentTime + (f.hour ?? 0) * 3600;
+        return { time: ts, value: f.predicted_price ?? f.value ?? f.price };
+      }).filter((p: any) => typeof p.time === 'number' && typeof p.value === 'number');
+
+      // Prepend current point to connect the line from now into the future
       const forecastData = [
         { time: currentTime, value: currentPrice },
-        ...forecast.forecast.map((f: any) => ({
-          time: f.timestamp / 1000,
-          value: f.predicted_price,
-        })),
+        ...computed,
       ];
 
       forecastSeriesRef.current.setData(forecastData);
+
+      // Ensure the future points are visible by extending the visible range
+      const firstCandleTime = candles[0]?.timestamp ? candles[0].timestamp / 1000 : currentTime - 100 * 3600;
+      const lastForecastTime = forecastData[forecastData.length - 1]?.time ?? currentTime;
+      try {
+        chartRef.current?.timeScale().setVisibleRange({ from: firstCandleTime, to: lastForecastTime });
+      } catch {}
     } catch (e) {
       console.warn('Forecast update skipped:', e);
     }
