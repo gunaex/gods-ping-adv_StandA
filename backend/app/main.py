@@ -3,7 +3,7 @@ Gods Ping - FastAPI Backend
 Main API endpoints for Shichi-Fukujin single-page trading platform
 """
 import os
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
@@ -55,6 +55,7 @@ def debug_cors():
     return {
         "allowed_origins": allowed_origins,
         "env_raw": os.getenv("CORS_ORIGINS"),
+        "allow_origin_regex": r"https://.*\.vercel\.app",
         "note": "Remove /api/debug/cors in production once CORS verified."
     }
 
@@ -728,6 +729,7 @@ async def start_dca_bot(
 
 @app.post("/api/bot/gods-hand/start")
 async def start_gods_hand(
+    request: Request,
     current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db),
     continuous: bool = True,
@@ -740,7 +742,8 @@ async def start_gods_hand(
     import logging
     
     logger = logging.getLogger(__name__)
-    logger.info(f"Starting Gods Hand - continuous={continuous}, interval={interval_seconds}")
+    origin = request.headers.get("origin")
+    logger.info(f"Starting Gods Hand - origin={origin} continuous={continuous}, interval={interval_seconds}")
 
     # Validate interval bounds
     if interval_seconds < 10:
