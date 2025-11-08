@@ -271,17 +271,40 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
         if sent and notification_type:
             mark_notification_sent(user_id, notification_type)
 
+    # Format AI decision calculation summary for message
+    signal_breakdown = recommendation.get('signal_breakdown', [])
+    buy_signals = sum(1 for s in signal_breakdown if 'BUY' in s)
+    sell_signals = sum(1 for s in signal_breakdown if 'SELL' in s)
+    hold_signals = sum(1 for s in signal_breakdown if 'HOLD' in s and 'BUY' not in s and 'SELL' not in s)
+    
+    decision_summary = f"""AI DECISION CALCULATION for {symbol}
+
+-- AI Recommendation: {action} @{confidence}
+   Signals analyzed: {len(signal_breakdown)}
+   {chr(10).join(['   • ' + s for s in signal_breakdown[:5]])}  # Show first 5
+
+-- Confidence: BUY={buy_signals}, SELL={sell_signals}, HOLD={hold_signals}
+   - Confidence: {confidence:.3f} (average of {len(signal_breakdown)} factors)
+
+Final Decision: {action} @ {confidence:.0%} confidence
+
+-- Position Setup for {symbol}:
+   - Max Position Size: ${current_position['max_position_value']:.2f}
+   - Current Held: ${current_position['position_value']:.2f} ({current_position['position_fill_percent']:.1f}%)
+   - Available: ${current_position['available_to_add']:.2f}
+   - Incremental Trade: ${incremental_calc['suggested_amount_usd']:.2f}"""
+
     # Log AI thinking with position info
     thinking_log = Log(
         timestamp=datetime.utcnow(),
         category=LogCategory.AI_THINKING,
         level=LogLevel.INFO,
-        message=f"AI recommendation for {symbol}: {action} @ confidence {confidence}",
+        message=decision_summary,
         details=json.dumps({
             "recommendation": recommendation,
             "risk_assessment": risk_assessment,
-            "signal_breakdown": recommendation.get('signal_breakdown', []),
-            "confidence_calculation": f"Average of {len(recommendation.get('signal_breakdown', []))} indicator signals",
+            "signal_breakdown": signal_breakdown,
+            "confidence_calculation": f"Average of {len(signal_breakdown)} indicator signals",
             "current_position": current_position,
             "incremental_calculation": incremental_calc,
             "step_settings": {
