@@ -451,11 +451,15 @@ function AIComparisonTab() {
 
   const loadComparisons = async () => {
     try {
-      const response = await fetch('/api/logs/ai-actions', {
+      const response = await fetch(`${API_BASE_URL}/logs/ai-actions`, {
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
         }
       });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`HTTP ${response.status} - ${text.slice(0, 120)}`);
+      }
       const data = await response.json();
       setComparisons(data.comparisons || []);
     } catch (error) {
