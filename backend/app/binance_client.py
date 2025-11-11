@@ -157,16 +157,17 @@ class BinanceThailandClient:
         
         Args:
             symbol: Trading pair in ccxt format (e.g., 'BTC/USDT')
-            amount: Amount in quote currency (USDT)
+            amount: Amount in base currency (e.g., BTC) — the quantity to buy
         """
         # Convert symbol format: BTC/USDT -> BTCUSDT
         binance_symbol = symbol.replace('/', '')
         
+        # Use 'quantity' (base asset amount) for market buy to match callers that pass base units
         return self.create_order(
             symbol=binance_symbol,
             side='BUY',
             order_type='MARKET',
-            quote_order_qty=amount
+            quantity=amount
         )
     
     def create_market_sell_order(self, symbol: str, amount: float) -> Dict:
