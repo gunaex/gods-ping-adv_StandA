@@ -49,17 +49,16 @@ async def get_account_balance(db: Session, user_id: int, fiat_currency: str = "U
         perf = calculate_paper_performance(user_id, symbol, 'gods_hand', db)
         
         if perf and perf.get('total_trades', 0) > 0:
-            # User has trading history with actual position - show actual position
+            # User has trading history - show actual position from trades
             quantity_held = perf.get('quantity_held', 0)
             cash_balance = perf.get('cash_balance', budget)
             position_value = quantity_held * current_price if quantity_held > 0 else 0
         else:
-            # No trades yet - split budget equally between base and quote
-            # Give user budget amount in quote currency (USDT)
-            # AND budget worth of base currency (BTC)
-            quantity_held = budget / current_price  # BTC amount
-            cash_balance = budget  # USDT amount
-            position_value = budget  # BTC value in USD
+            # No trades yet - split budget 50/50 between USDT and BTC
+            # This allows testing both BUY and SELL signals immediately
+            quantity_held = (budget / 2) / current_price  # 50% in BTC
+            cash_balance = budget / 2  # 50% in USDT
+            position_value = budget / 2  # BTC value in USD
         
         # Build assets list
         assets = [

@@ -333,7 +333,7 @@ export default function GodsHand({ symbol }: GodsHandProps) {
                   })()}
                 </div>
               <div style={{ fontSize: '0.95rem', marginTop: '12px', color: colors.text.primary }}>
-                {result.message}
+                {result.message || result.reason || result?.incremental_calculation?.reason || 'No additional details'}
               </div>
             </div>
           </div>

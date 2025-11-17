@@ -200,16 +200,9 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
         # Run Gods Mode AI
         gods_decision = await run_gods_mode(candles, position_state)
         
-        # Map Gods Mode signal to our action
+        # Map Gods Mode signal to our action (direct mapping for long-only)
         gods_signal = gods_decision['signal']
-        if gods_signal == 'BUY':
-            action = 'BUY'
-        elif gods_signal in ['SELL', 'SHORT']:
-            action = 'SELL'
-        elif gods_signal == 'COVER':
-            action = 'SELL'  # Cover = close short position (same as sell)
-        else:
-            action = 'HOLD'
+        action = gods_signal  # BUY, SELL, or HOLD
         
         confidence = gods_decision['confidence_score']
         
@@ -241,12 +234,20 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
     # Get current position including fees
     current_position = get_current_position(user_id, symbol, db)
 
-    # If paper trading and action is SELL, allow sell even if never bought (simulate as owned)
-    if config.paper_trading and action == 'SELL' and current_position['quantity'] == 0:
-        # Simulate owning the asset using the configured budget
-        simulated_budget = (config.budget or 10000.0)
-        current_position['quantity'] = simulated_budget / risk_assessment['current_price']
-        current_position['cost_basis'] = simulated_budget
+    # Paper trading initial state: Apply 50/50 split if no trades yet
+    if current_position.get('_paper_initial'):
+        budget = current_position.get('_budget', config.budget)
+        current_price = risk_assessment['current_price']
+        
+        # Start with 50% in BTC, 50% in USDT
+        current_position['quantity'] = (budget / 2) / current_price
+        current_position['cost_basis'] = budget / 2
+        current_position['average_price'] = current_price
+        current_position['position_value_usd'] = budget / 2
+        current_position['trades_count'] = 0
+        # Remove the flag
+        del current_position['_paper_initial']
+        del current_position['_budget']
     
     # Profit protection: trailing take-profit and hard stop-loss
     current_price = risk_assessment['current_price']

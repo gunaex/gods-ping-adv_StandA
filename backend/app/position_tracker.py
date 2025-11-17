@@ -60,6 +60,8 @@ def get_current_position(user_id: int, symbol: str, db: Session) -> Dict:
             "trades_count": 5  # Number of trades that built this position
         }
     """
+    from app.models import BotConfig
+    
     # Get all trades for this symbol (both paper and live)
     trades = db.query(Trade).filter(
         Trade.user_id == user_id,
@@ -68,6 +70,27 @@ def get_current_position(user_id: int, symbol: str, db: Session) -> Dict:
     ).order_by(Trade.timestamp).all()
     
     if not trades:
+        # No trades yet - check if paper trading mode
+        config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
+        if config and config.paper_trading:
+            # Paper trading: Start with 50% position (simulated initial holdings)
+            # This allows testing both BUY and SELL immediately
+            budget = config.budget
+            
+            # We need current price to calculate quantity
+            # Return a special flag so caller knows to get price
+            return {
+                "symbol": symbol,
+                "quantity": 0.0,
+                "cost_basis": 0.0,
+                "average_price": 0.0,
+                "total_fees_paid": 0.0,
+                "position_value_usd": 0.0,
+                "trades_count": 0,
+                "_paper_initial": True,  # Flag for paper trading initial state
+                "_budget": budget
+            }
+        
         return {
             "symbol": symbol,
             "quantity": 0.0,

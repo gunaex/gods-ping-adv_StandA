@@ -991,6 +991,95 @@ async def gods_hand_debug(
     }
 
 
+@app.get("/api/bot/gods-hand/preview")
+async def gods_hand_preview(
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Preview what Gods Hand would do without executing - shows exact calculation"""
+    from app.ai_engine import get_trading_recommendation, calculate_risk_assessment
+    from app.position_tracker import get_current_position, calculate_incremental_amount
+    
+    user_id = current_user["id"]
+    
+    # Get config
+    config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="No config found")
+    
+    symbol = config.symbol
+    
+    # Get AI recommendation
+    recommendation = await get_trading_recommendation(symbol, config)
+    risk_assessment = await calculate_risk_assessment(symbol, config)
+    
+    action = recommendation.get('action', 'HOLD')
+    confidence = recommendation.get('confidence', 0.0)
+    
+    # Get current position
+    current_position = get_current_position(user_id, symbol, db)
+    
+    # Apply 50/50 split if paper initial
+    if current_position.get('_paper_initial'):
+        budget = current_position.get('_budget', config.budget)
+        current_price = risk_assessment['current_price']
+        current_position['quantity'] = (budget / 2) / current_price
+        current_position['cost_basis'] = budget / 2
+        current_position['average_price'] = current_price
+        current_position['position_value_usd'] = budget / 2
+        current_position['trades_count'] = 0
+        del current_position['_paper_initial']
+        del current_position['_budget']
+    
+    # Calculate incremental step
+    max_position_size = risk_assessment['recommended_position_size']
+    confidence_multiplier = 0.5 + (confidence * 1.0) if confidence > 0 else 1.0
+    base_step_percent = config.entry_step_percent if action == 'BUY' else config.exit_step_percent
+    step_percent = min(base_step_percent * confidence_multiplier, 100.0)
+    
+    incremental_calc = calculate_incremental_amount(
+        current_position,
+        max_position_size,
+        step_percent,
+        action
+    )
+    
+    # Determine if would execute
+    would_execute = False
+    block_reason = None
+    
+    if confidence < config.min_confidence:
+        block_reason = f"Confidence {confidence:.2f} < minimum {config.min_confidence}"
+    elif not incremental_calc['can_execute']:
+        block_reason = incremental_calc['reason']
+    elif action == 'HOLD':
+        block_reason = "AI recommends HOLD"
+    else:
+        would_execute = True
+    
+    return {
+        "symbol": symbol,
+        "would_execute": would_execute,
+        "action": action,
+        "confidence": confidence,
+        "block_reason": block_reason,
+        "recommendation": recommendation,
+        "risk_assessment": risk_assessment,
+        "current_position": {
+            "quantity": current_position['quantity'],
+            "cost_basis": current_position['cost_basis'],
+            "position_value_usd": current_position['position_value_usd'],
+            "trades_count": current_position['trades_count']
+        },
+        "incremental_calculation": incremental_calc,
+        "step_settings": {
+            "base_step_percent": base_step_percent,
+            "confidence_multiplier": confidence_multiplier,
+            "effective_step_percent": step_percent
+        }
+    }
+
+
 # ----------------------------------------------------------------------------
 # Gods Hand Performance
 # ----------------------------------------------------------------------------

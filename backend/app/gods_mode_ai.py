@@ -168,8 +168,13 @@ class ModelB_Classifier:
         avg_gain = np.mean(gains[-period:])
         avg_loss = np.mean(losses[-period:])
         
-        if avg_loss == 0:
-            return 100.0
+        # Handle edge cases
+        if avg_loss == 0 and avg_gain == 0:
+            return 50.0  # No movement
+        elif avg_loss == 0:
+            return 85.0  # Strong buying but not extreme
+        elif avg_gain == 0:
+            return 15.0  # Strong selling but not extreme
         
         rs = avg_gain / avg_loss
         rsi = 100 - (100 / (1 + rs))
@@ -232,20 +237,20 @@ class ModelB_Classifier:
     def _generate_signal(price: float, psar: float, rsi: float, regime: str, volatility: float) -> tuple:
         """
         Generate trading signal based on regime and indicators
-        Optimized for SIDEWAYS-DOWN markets
+        Optimized for SIDEWAYS-DOWN markets (LONG-ONLY strategy)
         
         Returns: (signal, confidence)
         """
         # SIDEWAYS-DOWN strategy: 
-        # - SHORT/SELL on resistance with high confidence
-        # - BUY only on strong oversold + low volatility (mean reversion)
+        # - SELL on resistance with high confidence
+        # - BUY on strong oversold + low volatility (mean reversion)
         
         if regime == "TREND_DOWN":
-            # Strong downtrend: SHORT opportunities
-            if rsi > 50 and price < psar:
-                return "SELL", 0.85  # Ride the trend
-            elif rsi < 30:
-                return "COVER", 0.70  # Cover shorts on oversold
+            # Strong downtrend: Exit longs, wait for oversold to buy
+            if rsi < 30 and volatility < 0.015:
+                return "BUY", 0.75  # Buy oversold in downtrend (mean reversion)
+            elif rsi > 50:
+                return "SELL", 0.80  # Exit longs in downtrend
             else:
                 return "HOLD", 0.60
         
@@ -263,14 +268,14 @@ class ModelB_Classifier:
             if rsi > 70:
                 return "SELL", 0.80  # Exit overbought
             elif rsi < 30:
-                return "HOLD", 0.50  # Don't catch falling knife
+                return "HOLD", 0.50  # Don't catch falling knife in high vol
             else:
                 return "HOLD", 0.60
         
         else:  # TREND_UP
-            # Uptrend in generally bearish market: cautious
+            # Uptrend: Buy pullbacks, sell overbought
             if rsi < 40:
-                return "BUY", 0.65  # Weak buy on pullback
+                return "BUY", 0.70  # Buy on pullback
             elif rsi > 70:
                 return "SELL", 0.75  # Take profit
             else:
@@ -299,14 +304,15 @@ class MetaModel_Gating:
         model_a_output: Dict,
         model_b_output: Dict,
         current_price: float,
-        position: str = "FLAT"  # FLAT | LONG | SHORT
+        position: str = "FLAT"  # FLAT | LONG
     ) -> Dict:
         """
         Meta-decision logic: Gate between Model A and Model B
+        LONG-ONLY strategy (no short selling)
         
         Returns:
             {
-                "signal": "BUY" | "SELL" | "SHORT" | "COVER" | "HOLD",
+                "signal": "BUY" | "SELL" | "HOLD",
                 "price": float,
                 "timestamp": int,
                 "confidence_score": float (0-1),
@@ -326,8 +332,18 @@ class MetaModel_Gating:
         
         # Gating Decision Tree
         
-        # GATE 1: High Volatility → Trust Model B (regime classifier)
-        if volatility > 0.03:
+        # GATE 0: High-confidence Model B signals pass through (NEW)
+        if classifier_confidence >= 0.75 and classifier_signal != 'HOLD':
+            reason = f"High confidence Model B ({classifier_confidence:.0%}): {regime}, RSI={rsi:.0f}"
+            return MetaModel_Gating._format_output(
+                classifier_signal,
+                current_price,
+                classifier_confidence,
+                reason
+            )
+        
+        # GATE 1: High Volatility → Trust Model B (regime classifier) - RELAXED threshold
+        if volatility > 0.025:  # Reduced from 0.03
             reason = f"High volatility ({volatility:.1%}): Following Model B regime classifier ({regime})"
             return MetaModel_Gating._format_output(
                 classifier_signal,
@@ -336,20 +352,20 @@ class MetaModel_Gating:
                 reason
             )
         
-        # GATE 2: Sideways Range + Low Volatility → Use Model A forecast for entries
-        if regime == "RANGE" and volatility < 0.02:
+        # GATE 2: Sideways Range + Low Volatility → Use Model A forecast for entries - RELAXED
+        if regime == "RANGE" and volatility < 0.025:  # Relaxed from 0.02
             price_diff_pct = (forecast_price - current_price) / current_price
             
-            # Model A predicts UP movement (>1%) and RSI not overbought
-            if price_diff_pct > 0.01 and rsi < 60:
+            # Model A predicts UP movement (>0.5%) and RSI not overbought
+            if price_diff_pct > 0.005 and rsi < 65:  # Relaxed from 1% and 60
                 signal = "BUY" if position != "LONG" else "HOLD"
                 confidence = min(0.85, classifier_confidence + abs(momentum) * 0.5)
                 reason = f"Range market: Model A forecasts +{price_diff_pct:.2%} rise, RSI={rsi:.0f}"
                 return MetaModel_Gating._format_output(signal, current_price, confidence, reason)
             
-            # Model A predicts DOWN movement (<-1%) and RSI not oversold
-            elif price_diff_pct < -0.01 and rsi > 40:
-                signal = "SELL" if position == "LONG" else ("SHORT" if position == "FLAT" else "HOLD")
+            # Model A predicts DOWN movement (<-0.5%) and RSI not oversold
+            elif price_diff_pct < -0.005 and rsi > 40:  # Relaxed from -1%
+                signal = "SELL" if position == "LONG" else "HOLD"
                 confidence = min(0.85, classifier_confidence + abs(momentum) * 0.5)
                 reason = f"Range market: Model A forecasts {price_diff_pct:.2%} drop, RSI={rsi:.0f}"
                 return MetaModel_Gating._format_output(signal, current_price, confidence, reason)
@@ -363,40 +379,40 @@ class MetaModel_Gating:
                     f"Range market: Model A forecast unclear ({price_diff_pct:+.2%})"
                 )
         
-        # GATE 3: Strong Downtrend → Ensemble weighted toward Model B
-        if regime == "TREND_DOWN" and momentum < -0.01:
+        # GATE 3: Downtrend → Ensemble weighted toward Model B - RELAXED threshold
+        if regime == "TREND_DOWN" and momentum < -0.005:  # Relaxed from -0.01:  # Relaxed from -0.01
             # Downtrend confirmed by both models
-            if classifier_signal in ["SELL", "SHORT"]:
-                # Boost confidence if Model A also predicts down
+            if classifier_signal == "SELL" and position == "LONG":
+                # Exit longs in downtrend
                 forecast_agrees = forecast_price < current_price * 0.99
                 confidence = classifier_confidence
                 if forecast_agrees:
-                    confidence = min(0.95, confidence + 0.10)
-                    reason = f"Strong downtrend: Both models agree SHORT (forecast: {forecast_price:.2f})"
+                    confidence = min(0.90, confidence + 0.10)
+                    reason = f"Downtrend: Both models agree SELL (forecast: {forecast_price:.2f})"
                 else:
-                    reason = f"Downtrend: Model B signals {classifier_signal}, Model A neutral"
+                    reason = f"Downtrend: Model B signals SELL, Model A neutral"
                 
                 return MetaModel_Gating._format_output(
-                    classifier_signal,
+                    "SELL",
                     current_price,
                     confidence,
                     reason
                 )
             
-            elif classifier_signal == "COVER" and position == "SHORT":
-                # Exit short on Model B signal
+            elif classifier_signal == "BUY" and rsi < 30:
+                # Oversold buy in downtrend (mean reversion)
                 return MetaModel_Gating._format_output(
-                    "COVER",
+                    "BUY",
                     current_price,
                     classifier_confidence,
-                    f"Downtrend: Model B suggests COVER shorts (RSI={rsi:.0f})"
+                    f"Downtrend: Oversold bounce opportunity (RSI={rsi:.0f})"
                 )
             
             else:
                 return MetaModel_Gating._format_output(
                     "HOLD",
                     current_price,
-                    0.65,
+                    0.60,
                     f"Downtrend: Waiting for better entry (RSI={rsi:.0f})"
                 )
         
@@ -433,13 +449,14 @@ class MetaModel_Gating:
 async def run_gods_mode(candles: List[dict], current_position: str = "FLAT") -> Dict:
     """
     Main entry point for Gods Mode AI
+    LONG-ONLY strategy optimized for sideways-down markets
     
     Args:
         candles: List of OHLCV candlestick data (minimum 50 candles)
-        current_position: "FLAT" | "LONG" | "SHORT"
+        current_position: "FLAT" | "LONG" (no short positions supported)
     
     Returns:
-        Final trading decision JSON with signal, price, confidence, reason
+        Final trading decision JSON with signal (BUY/SELL/HOLD), price, confidence, reason
     """
     if len(candles) < 50:
         return {
