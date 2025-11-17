@@ -16,12 +16,97 @@ market_client = get_market_data_client()
 
 
 async def get_account_balance(db: Session, user_id: int, fiat_currency: str = "USD") -> dict:
-    """Get account balance and P/L from Binance TH"""
+    """Get account balance and P/L from Binance TH or paper trading simulation"""
+    from app.models import BotConfig, Trade
+    from app.paper_trading_tracker import calculate_paper_performance
+    
     # Get exchange rate
     exchange_rate = get_exchange_rate(fiat_currency)
     
+    # Check if paper trading mode
+    config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
+    if config and config.paper_trading:
+        # PAPER TRADING MODE: Simulate balance with budget split between base and quote currency
+        budget = config.budget
+        symbol = config.symbol
+        
+        # Parse symbol (e.g., "BTC/USDT" -> "BTC", "USDT")
+        try:
+            base_currency, quote_currency = symbol.split('/')
+        except:
+            base_currency, quote_currency = "BTC", "USDT"
+        
+        # Get current price for base currency
+        try:
+            ticker = await get_current_price(symbol)
+            current_price = ticker.get('last', 0)
+            if current_price == 0:
+                current_price = 42000.0  # Fallback if price is 0
+        except Exception as e:
+            current_price = 42000.0  # Fallback price
+        
+        # Calculate paper trading performance to get actual position
+        perf = calculate_paper_performance(user_id, symbol, 'gods_hand', db)
+        
+        if perf and perf.get('total_trades', 0) > 0:
+            # User has trading history with actual position - show actual position
+            quantity_held = perf.get('quantity_held', 0)
+            cash_balance = perf.get('cash_balance', budget)
+            position_value = quantity_held * current_price if quantity_held > 0 else 0
+        else:
+            # No trades yet - split budget equally between base and quote
+            # Give user budget amount in quote currency (USDT)
+            # AND budget worth of base currency (BTC)
+            quantity_held = budget / current_price  # BTC amount
+            cash_balance = budget  # USDT amount
+            position_value = budget  # BTC value in USD
+        
+        # Build assets list
+        assets = [
+            {
+                "asset": quote_currency,
+                "free": cash_balance,
+                "locked": 0.0,
+                "total": cash_balance,
+                "usd_value": cash_balance,
+            },
+            {
+                "asset": base_currency,
+                "free": quantity_held,
+                "locked": 0.0,
+                "total": quantity_held,
+                "usd_value": position_value,
+            }
+        ]
+        
+        total_balance = cash_balance + position_value
+        
+        # Calculate P/L if we have trading history
+        total_pnl = perf.get('total_pl', 0) if perf else 0
+        total_pnl_percentage = perf.get('pl_percent', 0) if perf else 0
+        
+        return {
+            "total_balance": total_balance * exchange_rate,
+            "available_balance": total_balance * exchange_rate,
+            "in_orders": 0,
+            "total_pnl": total_pnl * exchange_rate,
+            "total_pnl_percentage": total_pnl_percentage,
+            "daily_pnl": 0,
+            "daily_pnl_percentage": 0,
+            "assets": [
+                {
+                    **asset,
+                    "usd_value": asset["usd_value"] * exchange_rate
+                }
+                for asset in assets
+            ],
+            "fiat_currency": fiat_currency,
+            "exchange_rate": exchange_rate,
+            "paper_trading": True
+        }
+    
     try:
-        # Check if user has API keys configured
+        # LIVE TRADING MODE: Check if user has API keys configured
         user = db.query(User).filter(User.id == user_id).first()
         if not user or not user.binance_api_key or not user.binance_api_secret:
             # Return empty balance if API keys not configured

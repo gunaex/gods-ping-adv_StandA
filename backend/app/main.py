@@ -99,6 +99,7 @@ class UpdateBotConfigRequest(BaseModel):
     dca_amount_per_period: Optional[float] = None
     dca_interval_days: Optional[int] = None
     gods_hand_enabled: Optional[bool] = None
+    gods_mode_enabled: Optional[bool] = None
     notification_email: Optional[str] = None
     notify_on_action: Optional[bool] = None
     notify_on_position_size: Optional[bool] = None

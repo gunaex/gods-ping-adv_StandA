@@ -12,6 +12,7 @@ import PriceForecast from './PriceForecast';
 import BotsPanel from './BotsPanel';
 import AdvancedAnalysis from './AdvancedAnalysis';
 import GodsHand from './GodsHand';
+import GodsModeMetrics from './GodsModeMetrics';
 import PaperTradingPerformance from './PaperTradingPerformance';
 import SettingsModal from './SettingsModal';
 import LogsModal from './LogsModal';
@@ -126,6 +127,9 @@ export default function ShichiFukujin() {
 
       {/* Section 7: Gods Hand */}
       <GodsHand symbol={selectedSymbol} />
+
+      {/* Section 7.5: Gods Mode Metrics */}
+      <GodsModeMetrics symbol={selectedSymbol} />
 
       {/* Section 8: Paper Trading Performance */}
       <PaperTradingPerformance />

@@ -442,6 +442,7 @@ function GodsHandSettingsModal({ config, onClose, onSave, onSaveRunSettings, con
     risk_level: config?.risk_level || 'medium',
     min_confidence: config?.min_confidence || 0.7,
     gods_hand_enabled: config?.gods_hand_enabled || false,
+    gods_mode_enabled: config?.gods_mode_enabled || false,
   });
 
   const [runSettings, setRunSettings] = useState({
@@ -555,6 +556,65 @@ function GodsHandSettingsModal({ config, onClose, onSave, onSaveRunSettings, con
                 position: 'absolute',
                 top: '2px',
                 left: settings.paper_trading ? '2px' : '30px',
+                transition: 'all 0.3s ease',
+                boxShadow: colors.shadow.sm
+              }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Gods Mode Toggle - Advanced AI */}
+        <div style={{
+          padding: '20px',
+          background: `linear-gradient(135deg, ${colors.primary.sage}15 0%, ${colors.primary.coral}15 100%)`,
+          border: `2px solid ${settings.gods_mode_enabled ? colors.primary.warmRed : colors.border.default}`,
+          borderRadius: typography.borderRadius.md,
+          marginBottom: '20px',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+        }}
+        onClick={() => setSettings({ ...settings, gods_mode_enabled: !settings.gods_mode_enabled })}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: colors.text.primary, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {settings.gods_mode_enabled ? '🚀' : '🤖'} {settings.gods_mode_enabled ? 'GODS MODE' : 'Standard AI'}
+              </div>
+              <div style={{ fontSize: '0.9rem', color: colors.text.secondary, marginBottom: '8px' }}>
+                {settings.gods_mode_enabled 
+                  ? 'Advanced Meta-Model AI optimized for sideways-down markets'
+                  : 'Classic technical analysis with RSI, SMA, Bollinger Bands'}
+              </div>
+              {settings.gods_mode_enabled && (
+                <div style={{ 
+                  fontSize: '0.85rem', 
+                  color: colors.primary.warmRed,
+                  fontWeight: 600,
+                  marginTop: '8px',
+                  paddingTop: '8px',
+                  borderTop: `1px solid ${colors.border.subtle}`
+                }}>
+                  ⚡ Uses Model A (Forecaster) + Model B (Classifier) + Meta-Gating
+                </div>
+              )}
+            </div>
+            <div style={{
+              width: '60px',
+              height: '32px',
+              background: settings.gods_mode_enabled ? colors.primary.warmRed : colors.text.muted,
+              borderRadius: '16px',
+              position: 'relative',
+              transition: 'all 0.3s ease',
+              boxShadow: settings.gods_mode_enabled ? `0 0 12px ${colors.primary.warmRed}50` : 'none'
+            }}>
+              <div style={{
+                width: '28px',
+                height: '28px',
+                background: colors.background.primary,
+                borderRadius: '50%',
+                position: 'absolute',
+                top: '2px',
+                left: settings.gods_mode_enabled ? '30px' : '2px',
                 transition: 'all 0.3s ease',
                 boxShadow: colors.shadow.sm
               }} />

@@ -182,9 +182,58 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
     """Execute one Gods Hand iteration with incremental position building."""
     symbol = config.symbol
 
-    # Get AI recommendation and risk
-    recommendation = await get_trading_recommendation(symbol, config)
-    risk_assessment = await calculate_risk_assessment(symbol, config)
+    # Check if Gods Mode (advanced AI) is enabled
+    use_gods_mode = config.gods_mode_enabled if hasattr(config, 'gods_mode_enabled') else False
+    
+    if use_gods_mode:
+        # Use Gods Mode AI (Meta-Model with Model A + Model B)
+        from app.gods_mode_ai import run_gods_mode
+        from app.market import get_candlestick_data
+        
+        # Get sufficient candles for Gods Mode (needs 50+)
+        candles = await get_candlestick_data(symbol, timeframe='1h', limit=100)
+        
+        # Determine current position state
+        current_position = get_current_position(user_id, symbol, db)
+        position_state = "LONG" if current_position['quantity'] > 0 else "FLAT"
+        
+        # Run Gods Mode AI
+        gods_decision = await run_gods_mode(candles, position_state)
+        
+        # Map Gods Mode signal to our action
+        gods_signal = gods_decision['signal']
+        if gods_signal == 'BUY':
+            action = 'BUY'
+        elif gods_signal in ['SELL', 'SHORT']:
+            action = 'SELL'
+        elif gods_signal == 'COVER':
+            action = 'SELL'  # Cover = close short position (same as sell)
+        else:
+            action = 'HOLD'
+        
+        confidence = gods_decision['confidence_score']
+        
+        # Create recommendation format compatible with rest of code
+        recommendation = {
+            'action': action,
+            'confidence': confidence,
+            'reasoning': [gods_decision['reason']],
+            'signal_breakdown': [
+                f"Gods Mode: {gods_decision['reason']}",
+                f"Signal: {gods_signal}",
+                f"Price: ${gods_decision['price']:.2f}",
+                f"Confidence: {confidence:.0%}"
+            ],
+            'gods_mode': True,
+            '_gods_debug': gods_decision.get('_debug', {})
+        }
+        
+        # Calculate risk assessment (still need for position sizing)
+        risk_assessment = await calculate_risk_assessment(symbol, config)
+    else:
+        # Use standard AI recommendation
+        recommendation = await get_trading_recommendation(symbol, config)
+        risk_assessment = await calculate_risk_assessment(symbol, config)
 
     action = recommendation.get('action', 'HOLD')
     confidence = recommendation.get('confidence', 0.0)
@@ -277,6 +326,10 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
     sell_signals = sum(1 for s in signal_breakdown if 'SELL' in s)
     hold_signals = sum(1 for s in signal_breakdown if 'HOLD' in s and 'BUY' not in s and 'SELL' not in s)
 
+    # Check if using Gods Mode
+    is_gods_mode = recommendation.get('gods_mode', False)
+    mode_label = "GODS MODE (Meta-Model AI)" if is_gods_mode else "Standard AI"
+
     # Derive position metrics safely (keys may not exist yet in early cycles)
     max_pos = float(max_position_size or 0.0)
     current_val = float(current_position.get('position_value_usd', 0.0))
@@ -285,7 +338,7 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
     step_amount = float(incremental_calc.get('step_amount_usd', incremental_calc.get('suggested_amount_usd', 0.0)))
 
     decision_summary = (
-        f"AI DECISION CALCULATION for {symbol}\n\n"
+        f"AI DECISION CALCULATION for {symbol} ({mode_label})\n\n"
         f"-- AI Recommendation: {action} @{confidence:.2f}\n"
         f"   Signals analyzed: {len(signal_breakdown)}\n"
         + ("".join([f"   • {s}\n" for s in signal_breakdown[:5]]) or "   • (no signals logged)\n")

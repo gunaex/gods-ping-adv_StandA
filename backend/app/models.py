@@ -102,6 +102,7 @@ class BotConfig(Base):
     
     # Gods Hand Settings
     gods_hand_enabled = Column(Boolean, default=False)
+    gods_mode_enabled = Column(Boolean, default=False)  # Advanced AI with meta-model
 
     # Email Notification Settings
     notification_email = Column(String, nullable=True)
@@ -142,6 +143,7 @@ class BotConfig(Base):
             'dca_amount_per_period': self.dca_amount_per_period,
             'dca_interval_days': self.dca_interval_days,
             'gods_hand_enabled': self.gods_hand_enabled,
+            'gods_mode_enabled': self.gods_mode_enabled,
             'notification_email': self.notification_email,
             'notify_on_action': self.notify_on_action,
             'notify_on_position_size': self.notify_on_position_size,

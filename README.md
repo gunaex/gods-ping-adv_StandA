@@ -8,6 +8,7 @@ A streamlined, single-page AI-powered crypto trading platform.
 - 💱 **Fiat Currency Support**: Trade with THB/USD
 - 📊 **Real-time Market Data**: Live candlestick charts
 - 🤖 **AI Trading**: Recommendations, Grid Bot, DCA Bot, Gods Hand
+- 🚀 **Gods Mode**: Advanced Meta-Model AI optimized for sideways-down markets
 - ⚙️ **Unified Settings**: All configurations in one place
 - 📝 **Paper Trading**: Test strategies without risk
 
@@ -43,6 +44,7 @@ npm run dev
 - Exchange: Native Binance Thailand REST client (no ccxt required for TH)
 - Frontend: React, TypeScript, Vite, lightweight-charts
 - AI: Custom trading algorithms with risk management
+- Gods Mode: Meta-Model AI (Forecaster + Classifier + Gating Logic)
 
 ## Environment Variables
 
@@ -101,3 +103,41 @@ Ready to deploy to production? See detailed guides:
 	- Returns summary (win rate, net/gross PnL, counts), open positions, and last 5 trades for bot_type=gods_hand.
 - Reset paper trading: POST /api/bot/paper-trading/reset?symbol=BTC/USDT
 - Price forecast: GET /api/market/forecast/BTC/USDT?forecast_hours=6
+
+---
+
+## 🚀 Gods Mode - Advanced AI
+
+**New!** Gods Mode is an advanced Meta-Model AI system optimized for sideways-down markets.
+
+### Architecture
+
+- **Model A (Forecaster)**: LSTM-inspired price prediction with momentum
+- **Model B (Classifier)**: Market regime detection (Parabolic SAR + RSI + ATR)
+- **Meta-Model**: Ensemble gating logic that decides when to use each model
+
+### How to Enable
+
+1. Go to Gods Hand panel → Click **⚙️ Settings**
+2. Toggle **Gods Mode** ON (🚀 GODS MODE)
+3. Click **Save Settings**
+4. A new "GODS MODE - Meta-Model AI Analytics" panel will appear
+
+### Documentation
+
+- **[GODS_MODE_GUIDE.md](GODS_MODE_GUIDE.md)** - Complete guide with examples
+- **[GODS_MODE_IMPLEMENTATION.md](GODS_MODE_IMPLEMENTATION.md)** - Technical details
+
+### When to Use
+
+✅ **Use Gods Mode** for:
+- Sideways or bearish markets
+- High volatility conditions
+- SHORT/SELL strategies
+
+❌ **Use Standard AI** for:
+- Strong uptrends
+- Stable trending markets
+
+**Always test in paper trading first!**
+
