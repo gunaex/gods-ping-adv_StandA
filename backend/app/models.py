@@ -77,7 +77,7 @@ class BotConfig(Base):
     
     # Risk Management
     risk_level = Column(String, default='moderate')  # conservative, moderate, aggressive
-    min_confidence = Column(Float, default=0.7)
+    min_confidence = Column(Float, default=0.5)  # Lowered to allow more trades
     position_size_ratio = Column(Float, default=0.95)
     max_daily_loss = Column(Float, default=5.0)
     
@@ -103,6 +103,13 @@ class BotConfig(Base):
     # Gods Hand Settings
     gods_hand_enabled = Column(Boolean, default=False)
     gods_mode_enabled = Column(Boolean, default=False)  # Advanced AI with meta-model
+    tennis_mode_enabled = Column(Boolean, default=False)  # Sideways Sniper: Tennis Mode
+    
+    # Kill-switch baseline and protection
+    kill_switch_baseline = Column(Float, nullable=True)  # baseline unrealized P/L percent
+    kill_switch_last_trigger = Column(DateTime, nullable=True)  # last trigger timestamp
+    kill_switch_cooldown_minutes = Column(Integer, default=60)  # cooldown period in minutes
+    kill_switch_consecutive_breaches = Column(Integer, default=3)  # required consecutive breaches
 
     # Email Notification Settings
     notification_email = Column(String, nullable=True)
@@ -111,6 +118,9 @@ class BotConfig(Base):
     notify_on_failure = Column(Boolean, default=False)
     gmail_user = Column(String, nullable=True)
     gmail_app_password = Column(String, nullable=True)
+    
+    # External API Keys
+    cryptopanic_api_key = Column(String, nullable=True)
     
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -144,12 +154,18 @@ class BotConfig(Base):
             'dca_interval_days': self.dca_interval_days,
             'gods_hand_enabled': self.gods_hand_enabled,
             'gods_mode_enabled': self.gods_mode_enabled,
+            'tennis_mode_enabled': self.tennis_mode_enabled,
             'notification_email': self.notification_email,
             'notify_on_action': self.notify_on_action,
             'notify_on_position_size': self.notify_on_position_size,
             'notify_on_failure': self.notify_on_failure,
             'gmail_user': self.gmail_user,
             'gmail_app_password': '***' if self.gmail_app_password else None,
+            'cryptopanic_api_key': '***' if self.cryptopanic_api_key else None,
+            'kill_switch_baseline': self.kill_switch_baseline,
+            'kill_switch_last_trigger': self.kill_switch_last_trigger.isoformat() if self.kill_switch_last_trigger else None,
+            'kill_switch_cooldown_minutes': self.kill_switch_cooldown_minutes,
+            'kill_switch_consecutive_breaches': self.kill_switch_consecutive_breaches,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
 

@@ -79,6 +79,8 @@ export const botAPI = {
   
   startGodsHand: (continuous: boolean = true, intervalSeconds: number = 60) =>
     api.post('/bot/gods-hand/start', {}, { params: { continuous, interval_seconds: intervalSeconds } }),
+  resetKillSwitch: (restart: boolean = true) =>
+    api.post('/bot/gods-hand/reset-kill-switch', {}, { params: { restart } }),
   
   stopBot: (botType: string) => api.post(`/bot/${botType}/stop`),
   

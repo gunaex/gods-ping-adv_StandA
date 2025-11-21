@@ -3,7 +3,8 @@ import {
   LogOut, Settings, Clock, FileText 
 } from 'lucide-react';
 import { useStore } from '../store';
-import { tradingAPI } from '../api';
+import { tradingAPI, API_BASE_URL } from '../api';
+import { wsClient } from '../websocket';
 import TradingPairSelector from './TradingPairSelector';
 import AIRecommendation from './AIRecommendation';
 import AccountBalance from './AccountBalance';
@@ -16,6 +17,7 @@ import GodsModeMetrics from './GodsModeMetrics';
 import PaperTradingPerformance from './PaperTradingPerformance';
 import SettingsModal from './SettingsModal';
 import LogsModal from './LogsModal';
+import KillSwitchModal from './KillSwitchModal';
 import { formatLocalDateTime, getUserTimezone, getUTCOffset } from '../utils/timeUtils';
 
 export default function ShichiFukujin() {
@@ -24,6 +26,7 @@ export default function ShichiFukujin() {
   const [showLogs, setShowLogs] = useState(false);
   const [tradingPairs, setTradingPairs] = useState<any[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [killSwitchLog, setKillSwitchLog] = useState<any | null>(null);
 
   useEffect(() => {
     loadTradingPairs();
@@ -32,6 +35,32 @@ export default function ShichiFukujin() {
     const timer = setInterval(() => {
       setCurrentTime(new Date());
     }, 1000);
+
+    // Connect WebSocket for real-time log push
+    const token = localStorage.getItem('token');
+    if (token) {
+      wsClient.connect(token);
+      
+      // Listen for kill-switch events
+      const killSwitchHandler = (message: any) => {
+        const entry = message.data;
+        if (entry && typeof entry.message === 'string' && entry.message.includes('KILL-SWITCH')) {
+          const lastSeen = parseInt(localStorage.getItem('lastKillSwitchLogId') || '0', 10);
+          if (entry.id && entry.id > lastSeen) {
+            setKillSwitchLog(entry);
+            localStorage.setItem('lastKillSwitchLogId', String(entry.id));
+          }
+        }
+      };
+      
+      wsClient.on('kill_switch', killSwitchHandler);
+      
+      // Cleanup
+      return () => {
+        clearInterval(timer);
+        wsClient.off('kill_switch', killSwitchHandler);
+      };
+    }
 
     return () => clearInterval(timer);
   }, []);
@@ -43,6 +72,11 @@ export default function ShichiFukujin() {
     } catch (error) {
       console.error('Failed to load trading pairs:', error);
     }
+  };
+
+  const handleLogout = () => {
+    wsClient.disconnect();
+    logout();
   };
 
   return (
@@ -89,7 +123,7 @@ export default function ShichiFukujin() {
             <Settings size={20} />
             Settings
           </button>
-          <button onClick={logout}>
+          <button onClick={handleLogout}>
             <LogOut size={20} />
             Logout
           </button>
@@ -142,6 +176,17 @@ export default function ShichiFukujin() {
       {/* Settings Modal */}
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+
+      {/* Kill-Switch Modal */}
+      {killSwitchLog && (
+        <KillSwitchModal
+          timestamp={killSwitchLog.timestamp}
+          message={killSwitchLog.message}
+          details={killSwitchLog.details}
+          onClose={() => setKillSwitchLog(null)}
+          onOpenLogs={() => { setShowLogs(true); }}
+        />
       )}
     </div>
   );

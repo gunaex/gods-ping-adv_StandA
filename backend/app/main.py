@@ -3,7 +3,7 @@ Gods Ping - FastAPI Backend
 Main API endpoints for Shichi-Fukujin single-page trading platform
 """
 import os
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
@@ -100,6 +100,8 @@ class UpdateBotConfigRequest(BaseModel):
     dca_interval_days: Optional[int] = None
     gods_hand_enabled: Optional[bool] = None
     gods_mode_enabled: Optional[bool] = None
+    kill_switch_cooldown_minutes: Optional[int] = None
+    kill_switch_consecutive_breaches: Optional[int] = None
     notification_email: Optional[str] = None
     notify_on_action: Optional[bool] = None
     notify_on_position_size: Optional[bool] = None
@@ -399,7 +401,22 @@ async def update_bot_config(
     config.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(config)
-    
+
+    # Log user action: config updated
+    try:
+        import json
+        log = Log(
+            timestamp=datetime.utcnow(),
+            category=LogCategory.USER,
+            level=LogLevel.INFO,
+            message="User updated bot configuration",
+            details=json.dumps(update_data),
+            user_id=current_user["id"],
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        pass
     return config.to_dict()
 
 
@@ -508,7 +525,7 @@ async def get_price_forecast(
             raise HTTPException(status_code=404, detail="No candle data available")
         
         # Generate forecast
-        forecast = forecast_price_hourly(candles, forecast_hours=forecast_hours)
+        forecast = await forecast_price_hourly(candles, forecast_hours=forecast_hours)
 
         # Add summary text
         forecast['summary'] = get_forecast_summary(forecast)
@@ -681,6 +698,185 @@ async def get_balance(
         return balance
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Temporary debug endpoint to inspect balance calculation internals
+@app.get("/api/debug/balance")
+async def debug_balance(
+    fiat_currency: str = "USD",
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Debug version of balance API with detailed internal info"""
+    from app.market import get_current_price
+    from app.models import BotConfig
+    from app.paper_trading_tracker import calculate_paper_performance
+
+    debug_info = {"steps": []}
+
+    try:
+        user_id = current_user['id']
+        debug_info["user_id"] = user_id
+        debug_info["steps"].append("Got user ID")
+
+        # Get config
+        config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
+        if not config:
+            debug_info["error"] = "No bot config found"
+            return debug_info
+
+        debug_info["config"] = {
+            "budget": config.budget,
+            "symbol": config.symbol,
+            "paper_trading": bool(config.paper_trading)
+        }
+        debug_info["steps"].append("Got bot config")
+
+        if config and config.paper_trading:
+            budget = config.budget
+            symbol = config.symbol
+
+            # Parse symbol
+            try:
+                base_currency, quote_currency = symbol.split('/')
+                debug_info["currencies"] = {"base": base_currency, "quote": quote_currency}
+                debug_info["steps"].append("Parsed symbol")
+            except Exception as e:
+                base_currency, quote_currency = "BTC", "USDT"
+                debug_info["currencies"] = {"base": base_currency, "quote": quote_currency}
+                debug_info["steps"].append(f"Symbol parse failed, using defaults: {str(e)}")
+
+            # Get current price
+            try:
+                ticker = await get_current_price(symbol)
+                current_price = ticker.get('last', 0)
+                debug_info["price_fetch"] = {"ticker": ticker, "current_price": current_price}
+
+                if current_price == 0:
+                    current_price = 42000.0
+                    debug_info["steps"].append("Used fallback price (ticker returned 0)")
+                else:
+                    debug_info["steps"].append("Got valid price from ticker")
+            except Exception as e:
+                current_price = 42000.0
+                debug_info["price_fetch"] = {"error": str(e), "current_price": current_price}
+                debug_info["steps"].append(f"Price fetch failed, using fallback: {str(e)}")
+
+            debug_info["final_current_price"] = current_price
+
+            # Calculate performance
+            try:
+                perf = calculate_paper_performance(user_id, symbol, 'gods_hand', db)
+                debug_info["performance"] = perf
+                debug_info["steps"].append("Got performance calculation")
+            except Exception as e:
+                debug_info["performance"] = {"error": str(e)}
+                debug_info["steps"].append(f"Performance calculation failed: {str(e)}")
+                perf = None
+
+            # Balance calculation logic
+            if perf:
+                debug_info["steps"].append("Performance data available")
+
+                total_trades = perf.get('total_trades', 0)
+                debug_info["total_trades"] = total_trades
+
+                if total_trades > 0:
+                    debug_info["steps"].append("Has trading history - using actual position")
+                    quantity_held = perf.get('quantity_held', 0)
+                    cash_balance = perf.get('cash_balance', budget / 2)
+                    position_value = quantity_held * current_price if quantity_held > 0 else 0
+                else:
+                    debug_info["steps"].append("No trades - using 50/50 split from performance")
+                    cash_balance = perf.get('cash_balance', budget / 2)
+                    position_value = perf.get('position_value', budget / 2)
+                    quantity_held = position_value / current_price if current_price > 0 else 0
+
+            else:
+                debug_info["steps"].append("No performance data - using fallback calculation")
+                quantity_held = (budget / 2) / current_price
+                cash_balance = budget / 2
+                position_value = budget / 2
+
+            debug_info["final_calculation"] = {
+                "quantity_held": quantity_held,
+                "cash_balance": cash_balance,
+                "position_value": position_value,
+                "total_balance": cash_balance + position_value
+            }
+
+            # Build assets
+            assets = [
+                {
+                    "asset": quote_currency,
+                    "free": cash_balance,
+                    "locked": 0.0,
+                    "total": cash_balance,
+                    "usd_value": cash_balance,
+                },
+                {
+                    "asset": base_currency,
+                    "free": quantity_held,
+                    "locked": 0.0,
+                    "total": quantity_held,
+                    "usd_value": position_value,
+                }
+            ]
+
+            debug_info["assets"] = assets
+            debug_info["steps"].append("Built assets array")
+
+            return debug_info
+        else:
+            debug_info["error"] = "Not in paper trading mode or no config"
+            return debug_info
+
+    except Exception as e:
+        debug_info["error"] = str(e)
+        import traceback
+        debug_info["traceback"] = traceback.format_exc()
+        return debug_info
+
+
+
+@app.get("/api/debug/dbinfo")
+def debug_dbinfo(current_user: dict = Depends(get_current_active_user)):
+    """Return DB connection info and simple table counts for debugging."""
+    import os
+    from app.db import DATABASE_URL, engine
+    info = {
+        "DATABASE_URL": str(DATABASE_URL),
+        "cwd": os.getcwd(),
+        "exists": None,
+        "filesize": None,
+        "tables": {}
+    }
+
+    try:
+        # If using SQLite, check if file exists
+        if str(DATABASE_URL).startswith('sqlite'):
+            # Extract file path after sqlite:/// prefix
+            path = str(DATABASE_URL).replace('sqlite:///', '')
+            info['exists'] = os.path.exists(path)
+            try:
+                info['filesize'] = os.path.getsize(path) if info['exists'] else None
+            except Exception:
+                info['filesize'] = None
+
+        # Get simple row counts for common tables
+        with engine.connect() as conn:
+            for t in ['bot_configs', 'trades', 'paper_trading_snapshots']:
+                try:
+                    res = conn.execute(f"SELECT COUNT(*) as c FROM {t}")
+                    row = res.fetchone()
+                    info['tables'][t] = int(row[0]) if row is not None else None
+                except Exception as e:
+                    info['tables'][t] = f"error: {str(e)}"
+
+    except Exception as e:
+        info['error'] = str(e)
+
+    return info
 
 
 # AI Recommendations
@@ -887,6 +1083,19 @@ async def start_gods_hand(
     if interval_seconds > 3600:
         interval_seconds = 3600
 
+    # Log user action: start request
+    try:
+        db.add(Log(
+            timestamp=datetime.utcnow(),
+            category=LogCategory.USER,
+            level=LogLevel.INFO,
+            message=f"User started Gods Hand (continuous={continuous}, interval={interval_seconds}s)",
+            user_id=current_user["id"],
+        ))
+        db.commit()
+    except Exception:
+        pass
+
     result = await start_gods_hand_entry(current_user["id"], db, continuous=continuous, interval_seconds=interval_seconds)
     logger.info(f"Gods Hand start result: {result}")
     
@@ -904,6 +1113,19 @@ async def stop_bot(
     """Stop a running bot"""
     from app.bots import stop_bot as stop_running_bot
     
+    # Log user action: stop request
+    try:
+        db.add(Log(
+            timestamp=datetime.utcnow(),
+            category=LogCategory.USER,
+            level=LogLevel.INFO,
+            message=f"User stopped bot {bot_type}",
+            user_id=current_user["id"],
+        ))
+        db.commit()
+    except Exception:
+        pass
+
     result = await stop_running_bot(bot_type, current_user["id"], db)
     return result
 
@@ -918,6 +1140,56 @@ async def get_bot_status(
     
     status = await check_status(current_user["id"], db)
     return status
+
+
+@app.post("/api/bot/gods-hand/reset-kill-switch")
+async def reset_kill_switch_baseline(
+    restart: bool = True,
+    current_user: dict = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Reset the kill-switch baseline to the current unrealized P/L percent.
+    Optionally restarts Gods Hand.
+    """
+    from app.position_tracker import get_current_position, calculate_position_pl
+    from app.market import get_current_price
+    from app.bots import set_kill_switch_baseline, start_gods_hand_entry
+
+    user_id = current_user["id"]
+    config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
+    if not config:
+        raise HTTPException(status_code=404, detail="No configuration found")
+
+    # Compute current unrealized P/L
+    current_pos = get_current_position(user_id, config.symbol, db)
+    ticker = await get_current_price(config.symbol)
+    current_price = ticker.get('last', 0.0)
+    pl_data = calculate_position_pl(current_pos, current_price)
+    pl_percent = pl_data['pl_percent']
+
+    # Set baseline and log
+    result = set_kill_switch_baseline(user_id, pl_percent, config.symbol, db, current_price=current_price)
+
+    # Log user action
+    try:
+        db.add(Log(
+            timestamp=datetime.utcnow(),
+            category=LogCategory.USER,
+            level=LogLevel.INFO,
+            message=f"User reset kill-switch baseline (pl={pl_percent:.2f}%)",
+            user_id=user_id,
+        ))
+        db.commit()
+    except Exception:
+        pass
+
+    # Optionally restart Gods Hand loop
+    restarted = False
+    if restart:
+        await start_gods_hand_entry(user_id, db, continuous=True, interval_seconds=60)
+        restarted = True
+
+    return {"ok": True, "baseline": result, "restarted": restarted}
 
 
 @app.get("/api/bot/gods-hand/debug")
@@ -1462,6 +1734,76 @@ async def create_paper_snapshot(
     
     snapshot = save_paper_snapshot(current_user["id"], symbol, bot_type, db)
     return {"status": "success", "snapshot": snapshot}
+
+
+# ============================================================================
+# WEBSOCKET ENDPOINT
+# ============================================================================
+
+@app.websocket("/ws/logs/{token}")
+async def websocket_logs(websocket: WebSocket, token: str):
+    """WebSocket endpoint for real-time log push.
+    Client connects with auth token in URL path.
+    """
+    from app.websocket_manager import ws_manager
+    from app.auth import verify_token
+    
+    user_id = None
+    
+    try:
+        # Authenticate token
+        try:
+            payload = verify_token(token, "access")
+            user_id = payload.get("user_id")
+            if not user_id:
+                await websocket.close(code=1008, reason="Invalid token")
+                return
+        except Exception as e:
+            print(f"WebSocket authentication failed: {e}")
+            await websocket.close(code=1008, reason="Authentication failed")
+            return
+        
+        # Register connection
+        await ws_manager.connect(websocket, user_id)
+        print(f"✅ WebSocket authenticated and connected for user {user_id}")
+        
+        # Keep connection alive and handle ping/pong
+        while True:
+            try:
+                # Wait for message with timeout to detect dead connections
+                import asyncio
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+                
+                # Handle ping/pong to keep connection alive
+                if data == "ping":
+                    await websocket.send_text("pong")
+                    # print(f"🏓 Pong sent to user {user_id}")
+                elif data == "pong":
+                    # Client responding to our ping
+                    pass
+                else:
+                    print(f"📨 Received unknown message from user {user_id}: {data}")
+                    
+            except WebSocketDisconnect:
+                print(f"🔌 WebSocket client {user_id} disconnected normally")
+                break
+            except asyncio.TimeoutError:
+                # No message received in 60 seconds, check if connection is still alive
+                try:
+                    await websocket.send_text("ping")
+                except:
+                    print(f"⚠️ WebSocket {user_id} appears dead, closing...")
+                    break
+            except Exception as msg_error:
+                print(f"❌ WebSocket message error for user {user_id}: {msg_error}")
+                break
+                
+    except Exception as e:
+        print(f"❌ WebSocket connection error for user {user_id or 'unknown'}: {e}")
+    finally:
+        if user_id:
+            await ws_manager.disconnect(websocket, user_id)
+            print(f"🔌 WebSocket cleanup completed for user {user_id}")
 
 
 if __name__ == "__main__":

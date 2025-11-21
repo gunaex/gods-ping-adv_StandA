@@ -106,6 +106,26 @@ def get_current_position(user_id: int, symbol: str, db: Session) -> Dict:
     cost_basis = 0.0
     total_fees = 0.0
     trades_count = 0
+
+    # If there are trades but no BUYs (e.g., a lone SELL recorded in paper mode),
+    # initialize an implicit 50/50 starting position so that SELLs are applied
+    # against a reasonable starting holding instead of creating negative quantity.
+    try:
+        buy_trades = [t for t in trades if (t.side or '').upper() == 'BUY']
+        if len(trades) > 0 and len(buy_trades) == 0:
+            # Only SELLs exist. If user is in paper trading, create implicit initial
+            # holdings equal to 50% of the budget at the price of the first trade.
+            from app.models import BotConfig
+            config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
+            if config and config.paper_trading:
+                first_trade_price = trades[0].filled_price or trades[0].price or 0.0
+                if first_trade_price > 0:
+                    implicit_value = config.budget / 2.0
+                    quantity = implicit_value / first_trade_price
+                    cost_basis = implicit_value
+    except Exception:
+        # Fail-safe: if anything goes wrong with implicit init, continue normally
+        pass
     
     BINANCE_FEE_RATE = 0.001  # 0.1% trading fee
     

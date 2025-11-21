@@ -41,21 +41,27 @@ async def get_account_balance(db: Session, user_id: int, fiat_currency: str = "U
             ticker = await get_current_price(symbol)
             current_price = ticker.get('last', 0)
             if current_price == 0:
-                current_price = 42000.0  # Fallback if price is 0
+                current_price = 0.0  # No fallback to fake prices
         except Exception as e:
-            current_price = 42000.0  # Fallback price
+            current_price = 0.0  # No fallback to fake prices
         
         # Calculate paper trading performance to get actual position
-        perf = calculate_paper_performance(user_id, symbol, 'gods_hand', db)
+        perf = calculate_paper_performance(user_id, symbol, 'gods_hand', db, current_price=current_price)
         
-        if perf and perf.get('total_trades', 0) > 0:
-            # User has trading history - show actual position from trades
-            quantity_held = perf.get('quantity_held', 0)
-            cash_balance = perf.get('cash_balance', budget)
-            position_value = quantity_held * current_price if quantity_held > 0 else 0
+        if perf:
+            if perf.get('total_trades', 0) > 0:
+                # User has trading history - show actual position from trades
+                quantity_held = perf.get('quantity_held', 0)
+                cash_balance = perf.get('cash_balance', budget / 2)
+                position_value = quantity_held * current_price if quantity_held > 0 else 0
+            else:
+                # No trades yet - use the 50/50 split from performance calculation
+                # This ensures consistency between balance API and performance tracker
+                cash_balance = perf.get('cash_balance', budget / 2)  # Use perf calculation
+                position_value = perf.get('position_value', budget / 2)  # Use perf calculation
+                quantity_held = position_value / current_price if current_price > 0 else 0
         else:
-            # No trades yet - split budget 50/50 between USDT and BTC
-            # This allows testing both BUY and SELL signals immediately
+            # Fallback if performance calculation fails
             quantity_held = (budget / 2) / current_price  # 50% in BTC
             cash_balance = budget / 2  # 50% in USDT
             position_value = budget / 2  # BTC value in USD
@@ -188,10 +194,30 @@ async def get_account_balance(db: Session, user_id: int, fiat_currency: str = "U
                 "usd_value": usd_value,
             })
         
-        # TODO: Calculate P/L from trade history
-        # For now, returning mock P/L data
+        # Calculate P/L from trade history for Live Trading
         total_pnl = 0
         total_pnl_percentage = 0
+        
+        if config and config.symbol:
+            # Try to get current price for P/L calculation
+            current_price = 0.0
+            # Check if we already have it in cache (from balances loop)
+            if config.symbol in price_cache:
+                current_price = price_cache[config.symbol]
+            else:
+                # Fetch fresh price
+                try:
+                    ticker = await get_current_price(config.symbol)
+                    current_price = float(ticker.get('last', 0))
+                except Exception:
+                    pass
+
+            # Use the shared performance tracker with mode='live'
+            perf = calculate_paper_performance(user_id, config.symbol, 'gods_hand', db, mode='live', current_price=current_price)
+            if perf:
+                total_pnl = perf.get('total_pl', 0)
+                total_pnl_percentage = perf.get('pl_percent', 0)
+        
         daily_pnl = 0
         daily_pnl_percentage = 0
         
@@ -293,13 +319,18 @@ def convert_to_fiat(amount: float, fiat_currency: str = "USD") -> float:
 
 
 def get_exchange_rate(fiat_currency: str = "USD") -> float:
-    """Get exchange rate from USD to target fiat currency"""
-    # Simplified conversion rates (hardcoded for now, should use live forex API)
-    rates = {
-        "USD": 1.0,
-        "THB": 35.5  # Approximate USD to THB rate
-    }
-    return rates.get(fiat_currency, 1.0)
+    """
+    Get exchange rate from USD to target fiat currency.
+    
+    NOTE: Real-time exchange rates require a Forex API integration.
+    Currently defaulting to 1.0 (USD) to avoid using outdated static rates.
+    """
+    if fiat_currency == "USD":
+        return 1.0
+        
+    # In production, fetch real rate here.
+    # Returning 1.0 (no conversion) to avoid using fake/static data.
+    return 1.0
 
 
 async def execute_market_trade(

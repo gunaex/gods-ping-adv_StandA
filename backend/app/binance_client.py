@@ -239,15 +239,15 @@ class BinanceThMarketData:
         self._rate_limit_until = None
         
         # Cache durations (seconds)
-        self.ticker_cache_duration = 5
+        self.ticker_cache_duration = 2  # Reduced from 5s
         self.orderbook_cache_duration = 2
         self.ohlcv_cache_durations = {
-            '1m': 60,
-            '5m': 120,
-            '15m': 300,
-            '1h': 600,
-            '4h': 1800,
-            '1d': 3600
+            '1m': 5,    # Reduced from 60s
+            '5m': 10,   # Reduced from 120s
+            '15m': 15,  # Reduced from 300s
+            '1h': 15,   # Reduced from 600s (10m) -> 15s
+            '4h': 30,   # Reduced from 1800s
+            '1d': 60    # Reduced from 3600s
         }
     
     def _check_rate_limit(self):

@@ -20,6 +20,8 @@ from app.notification_limiter import can_send_notification, mark_notification_se
 # Bot status tracking (in-memory, use Redis in production)
 bot_status = {}
 bot_tasks = {}
+# Consecutive breach tracking: user_id -> list of timestamps when breach occurred
+kill_switch_breach_history = {}
 
 
 async def start_grid_bot(user_id: int, config: BotConfig, db: Session) -> dict:
@@ -697,48 +699,132 @@ async def _gods_hand_loop(user_id: int, interval_seconds: int):
                     await asyncio.sleep(interval_seconds)
                     continue
                 
-                print(f"📊 Checking daily P/L for user {user_id}...")
-                # Daily kill-switch: check realized P/L for today
-                today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-                today_trades = dbi.query(Trade).filter(
-                    Trade.user_id == user_id,
-                    Trade.symbol == config.symbol,
-                    Trade.bot_type == 'gods_hand',
-                    Trade.timestamp >= today_start,
-                    Trade.status.in_(['completed_paper', 'completed_live', 'completed'])
-                ).all()
+                print(f"📊 Checking unrealized P/L for user {user_id}...")
+                # Kill-switch: check UNREALIZED P/L based on current position value
+                # This is better than daily realized P/L because it monitors actual portfolio value
                 
-                # Calculate today's realized P/L (only counts completed sell trades)
-                daily_pl_percent = 0.0
-                if today_trades:
-                    buys_cost = sum(t.amount * (t.filled_price or t.price) for t in today_trades if t.side == 'BUY')
-                    sells_revenue = sum(t.amount * (t.filled_price or t.price) for t in today_trades if t.side == 'SELL')
+                from app.position_tracker import get_current_position, calculate_position_pl
+                from app.market import get_current_price
+                
+                try:
+                    # Get current position
+                    current_pos = get_current_position(user_id, config.symbol, dbi)
                     
-                    # Only calculate P/L if we have both buys and sells (realized P/L)
-                    # If we only have buys, P/L is 0 (unrealized, not a loss yet)
-                    if buys_cost > 0 and sells_revenue > 0:
-                        daily_pl_percent = ((sells_revenue - buys_cost) / buys_cost) * 100
-                    else:
-                        # No sells yet, so no realized loss
-                        daily_pl_percent = 0.0
+                    # Get current market price
+                    ticker = await get_current_price(config.symbol)
+                    current_price = ticker.get('last', 0)
+                    
+                    # Calculate unrealized P/L
+                    pl_data = calculate_position_pl(current_pos, current_price)
+                    unrealized_pl_percent = pl_data['pl_percent']
+                    
+                    print(f"💰 Unrealized P/L: {unrealized_pl_percent:.2f}% (limit: -{config.max_daily_loss}%)")
+                    print(f"   Position value: ${pl_data['current_value']:,.2f}")
+                    print(f"   Cost basis: ${pl_data['cost_basis']:,.2f}")
+                    
+                except Exception as e:
+                    print(f"⚠️ Could not calculate P/L: {str(e)}")
+                    unrealized_pl_percent = 0.0
                 
-                print(f"💰 Daily P/L: {daily_pl_percent:.2f}% (limit: {config.max_daily_loss}%)")
-                
-                # Kill-switch: stop if daily loss exceeds max_daily_loss
-                if daily_pl_percent < -config.max_daily_loss:
-                    print(f"🚨 KILL-SWITCH TRIGGERED! Daily loss {daily_pl_percent:.2f}% exceeds limit {config.max_daily_loss}%")
+                # Use baseline if set: compare delta from baseline
+                baseline = config.kill_switch_baseline
+                effective_pl = unrealized_pl_percent - baseline if baseline is not None else unrealized_pl_percent
+
+                # Check cooldown: skip check if within cooldown period
+                if config.kill_switch_last_trigger:
+                    time_since_trigger = (datetime.utcnow() - config.kill_switch_last_trigger).total_seconds() / 60
+                    if time_since_trigger < config.kill_switch_cooldown_minutes:
+                        remaining_minutes = config.kill_switch_cooldown_minutes - time_since_trigger
+                        print(f"⏸️ Kill-switch in cooldown ({time_since_trigger:.1f}/{config.kill_switch_cooldown_minutes} min - {remaining_minutes:.1f} min remaining)")
+                        
+                        # Log cooldown status for user visibility
+                        cooldown_log = Log(
+                            timestamp=datetime.utcnow(),
+                            category=LogCategory.BOT,
+                            level=LogLevel.INFO,
+                            message=f"Gods Hand paused - Kill-switch cooldown active ({remaining_minutes:.1f} minutes remaining)",
+                            details=json.dumps({
+                                "remaining_minutes": remaining_minutes,
+                                "total_cooldown_minutes": config.kill_switch_cooldown_minutes,
+                                "triggered_at": config.kill_switch_last_trigger.isoformat()
+                            }),
+                            user_id=user_id,
+                            bot_type="gods_hand",
+                        )
+                        dbi.add(cooldown_log)
+                        dbi.commit()
+                        
+                        await asyncio.sleep(interval_seconds)
+                        continue
+
+                # Track breaches: require N consecutive breaches
+                if effective_pl < -config.max_daily_loss:
+                    # Record breach
+                    if user_id not in kill_switch_breach_history:
+                        kill_switch_breach_history[user_id] = []
+                    kill_switch_breach_history[user_id].append(datetime.utcnow())
+                    # Keep only recent breaches (last hour)
+                    cutoff = datetime.utcnow() - timedelta(hours=1)
+                    kill_switch_breach_history[user_id] = [t for t in kill_switch_breach_history[user_id] if t > cutoff]
+                    
+                    consecutive_breaches = len(kill_switch_breach_history[user_id])
+                    required_breaches = config.kill_switch_consecutive_breaches
+                    
+                    print(f"⚠️ Kill-switch breach {consecutive_breaches}/{required_breaches}: effective P/L {effective_pl:.2f}% < -{config.max_daily_loss}%")
+                    
+                    if consecutive_breaches < required_breaches:
+                        # Not enough consecutive breaches yet
+                        print(f"💡 Continuing... need {required_breaches - consecutive_breaches} more consecutive breach(es)")
+                        await asyncio.sleep(interval_seconds)
+                        continue
+                    
+                    # Trigger kill-switch after N consecutive breaches
+                    print(f"🚨 KILL-SWITCH TRIGGERED after {consecutive_breaches} consecutive breaches!")
                     bot_status[key] = "stopped"
+                    
+                    # Update last trigger timestamp
+                    config.kill_switch_last_trigger = datetime.utcnow()
+                    dbi.commit()
+                    
+                    # Clear breach history
+                    kill_switch_breach_history[user_id] = []
+                    
                     err_log = Log(
                         timestamp=datetime.utcnow(),
                         category=LogCategory.BOT,
                         level=LogLevel.WARNING,
-                        message=f"Gods Hand KILL-SWITCH: Daily loss {daily_pl_percent:.2f}% exceeds limit {config.max_daily_loss}%",
+                        message=f"Gods Hand KILL-SWITCH: Unrealized loss {unrealized_pl_percent:.2f}% exceeds limit {config.max_daily_loss}% ({consecutive_breaches} consecutive breaches)",
+                        details=json.dumps({
+                            "unrealized_pl_percent": unrealized_pl_percent,
+                            "effective_pl_percent": effective_pl,
+                            "baseline_pl_percent": baseline,
+                            "consecutive_breaches": consecutive_breaches,
+                            "required_breaches": required_breaches,
+                            "position_value": pl_data['current_value'],
+                            "cost_basis": pl_data['cost_basis'],
+                            "current_price": current_price,
+                            "max_daily_loss": config.max_daily_loss,
+                            "cooldown_minutes": config.kill_switch_cooldown_minutes
+                        }),
                         user_id=user_id,
                         bot_type="gods_hand",
                     )
                     dbi.add(err_log)
                     dbi.commit()
+                    dbi.refresh(err_log)
+                    
+                    # Broadcast via WebSocket for instant notification
+                    try:
+                        from app.websocket_manager import ws_manager
+                        await ws_manager.broadcast_kill_switch(user_id, err_log.to_dict())
+                    except Exception as ws_err:
+                        print(f"⚠️ Failed to broadcast kill-switch via WebSocket: {ws_err}")
+                    
                     break
+                else:
+                    # No breach, clear history
+                    if user_id in kill_switch_breach_history:
+                        kill_switch_breach_history[user_id] = []
                 
                 print(f"🤖 Calling gods_hand_once...")
                 await gods_hand_once(user_id, config, dbi)
@@ -842,6 +928,35 @@ async def start_gods_hand_entry(user_id: int, db: Session, continuous: bool = Tr
     return result
 
 
+def set_kill_switch_baseline(user_id: int, pl_percent: float, symbol: Optional[str], db: Session, current_price: float = 0.0) -> dict:
+    """Set the kill-switch baseline to a specified unrealized P/L percent and persist to DB."""
+    config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
+    if config:
+        config.kill_switch_baseline = pl_percent
+        db.commit()
+    
+    # Clear breach history
+    if user_id in kill_switch_breach_history:
+        kill_switch_breach_history[user_id] = []
+
+    reset_log = Log(
+        timestamp=datetime.utcnow(),
+        category=LogCategory.SYSTEM,
+        level=LogLevel.INFO,
+        message=f"Kill-switch baseline reset to {pl_percent:.2f}%",
+        details=json.dumps({
+            "baseline_pl_percent": pl_percent,
+            "current_price": current_price,
+            "symbol": symbol
+        }),
+        user_id=user_id,
+        bot_type="gods_hand",
+    )
+    db.add(reset_log)
+    db.commit()
+    return {"status": "reset", "baseline_pl_percent": pl_percent}
+
+
 async def stop_bot(bot_type: str, user_id: int, db: Session) -> dict:
     """Stop a running bot"""
     # Normalize bot type to internal key format (use underscores)
@@ -869,9 +984,42 @@ async def stop_bot(bot_type: str, user_id: int, db: Session) -> dict:
 
 async def get_bot_status(user_id: int, db: Session) -> dict:
     """Get status of all bots for user"""
+    
+    # Get kill-switch cooldown info
+    kill_switch_info = None
+    config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
+    
+    if config and config.kill_switch_last_trigger:
+        time_since_trigger = (datetime.utcnow() - config.kill_switch_last_trigger).total_seconds() / 60
+        cooldown_minutes = config.kill_switch_cooldown_minutes or 60
+        
+        if time_since_trigger < cooldown_minutes:
+            remaining_minutes = cooldown_minutes - time_since_trigger
+            kill_switch_info = {
+                "active": True,
+                "remaining_minutes": round(remaining_minutes, 1),
+                "total_cooldown_minutes": cooldown_minutes,
+                "triggered_at": config.kill_switch_last_trigger.isoformat(),
+                "message": f"Kill-switch cooldown active: {remaining_minutes:.1f} minutes remaining"
+            }
+    
+    # Get consecutive breach info
+    breach_info = None
+    if user_id in kill_switch_breach_history and kill_switch_breach_history[user_id]:
+        consecutive_breaches = len(kill_switch_breach_history[user_id])
+        required_breaches = config.kill_switch_consecutive_breaches if config else 3
+        
+        breach_info = {
+            "consecutive_breaches": consecutive_breaches,
+            "required_breaches": required_breaches,
+            "message": f"Kill-switch breach warning: {consecutive_breaches}/{required_breaches} consecutive breaches"
+        }
+    
     return {
         "grid": bot_status.get(f"grid_{user_id}", "stopped"),
         "dca": bot_status.get(f"dca_{user_id}", "stopped"),
         "gods_hand": bot_status.get(f"gods_hand_{user_id}", "stopped"),
+        "kill_switch_cooldown": kill_switch_info,
+        "kill_switch_breach_warning": breach_info,
         "timestamp": datetime.utcnow().isoformat()
     }

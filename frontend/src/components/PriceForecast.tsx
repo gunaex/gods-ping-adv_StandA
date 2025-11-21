@@ -58,6 +58,11 @@ interface Forecast {
       pressure: string;
       volume_trend: string;
       strength: number;
+      whale_activity?: {
+        detected: boolean;
+        sentiment: string;
+        ratio: number;
+      };
     };
   };
   social_sentiment?: {
@@ -454,6 +459,20 @@ export default function PriceForecast({ symbol }: ForecastProps) {
                     </span>
                   </div>
                 )}
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ opacity: 0.7 }}>Whale Activity:</span>
+                  {forecast.technical_indicators.volume?.whale_activity?.detected ? (
+                    <span style={{ 
+                      fontWeight: 'bold',
+                      color: forecast.technical_indicators.volume.whale_activity.sentiment === 'BULLISH_WHALE' ? '#4ade80' :
+                             forecast.technical_indicators.volume.whale_activity.sentiment === 'BEARISH_WHALE' ? '#f87171' : '#fbbf24'
+                    }}>
+                      🐋 DETECTED ({forecast.technical_indicators.volume.whale_activity.ratio.toFixed(1)}x)
+                    </span>
+                  ) : (
+                    <span style={{ opacity: 0.5 }}>None</span>
+                  )}
+                </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ opacity: 0.7 }}>Signal Strength:</span>
                   <span style={{ fontWeight: 'bold' }}>

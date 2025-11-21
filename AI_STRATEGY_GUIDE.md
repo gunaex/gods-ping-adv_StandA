@@ -231,12 +231,28 @@ Look at "AI Thinking" logs to see:
 
 ---
 
-## Questions?
+## Sideways Sniper: Tennis Mode (New)
 
-Check the logs for detailed signal breakdowns. The AI will show you:
-- What each indicator said (RSI, SMA, BB)
-- What confidence each gave (0.5 - 0.8)
-- How the final decision was made
-- Why trades were or weren't executed
+**Objective:** Profit from sideways/ranging markets where trend-following strategies fail.
 
-**Remember:** No trading strategy is perfect. Always trade responsibly and only with money you can afford to lose.
+### Activation Condition
+- **Market Condition:** ADX < 25 (Non-trending / Sideways)
+- **Enabled:** Must be toggled ON in Settings
+
+### Strategy Logic
+Uses Bollinger Bands as "tennis court" boundaries to bounce trades back and forth.
+
+#### 1. Long Entry (Bounce off bottom)
+- **Condition:** Price < Lower Bollinger Band AND RSI < 35
+- **Logic:** Price is overextended to the downside in a range. Expect reversion to mean.
+- **Confidence:** 0.95 (High confidence override)
+
+#### 2. Short Entry / Sell (Bounce off top)
+- **Condition:** Price > Upper Bollinger Band AND RSI > 65
+- **Logic:** Price is overextended to the upside in a range. Expect reversion to mean.
+- **Confidence:** 0.95 (High confidence override)
+
+### Why it works
+In sideways markets, prices tend to oscillate between support (lower band) and resistance (upper band). Trend strategies get chopped up here, but Tennis Mode thrives by buying low and selling high within the range.
+
+**Note:** This mode automatically disables itself if ADX rises above 25 (trend begins), preventing it from fighting a breakout.

@@ -490,6 +490,16 @@ def analyze_volume(volumes: List[float], prices: List[float]) -> Dict:
     price_change = prices[-1] - prices[-2]
     volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
     
+    # Whale Activity Detection (Volume Spike > 3x average)
+    whale_activity_detected = volume_ratio > 3.0
+    whale_sentiment = 'NEUTRAL'
+    
+    if whale_activity_detected:
+        if price_change > 0:
+            whale_sentiment = 'BULLISH_WHALE'
+        elif price_change < 0:
+            whale_sentiment = 'BEARISH_WHALE'
+
     if price_change > 0 and volume_ratio > 1.2:
         pressure = 'BUYING'
         strength = min(1.0, (volume_ratio - 1.0) / 2.0)
@@ -505,76 +515,32 @@ def analyze_volume(volumes: List[float], prices: List[float]) -> Dict:
         'current_volume': round(current_volume, 2),
         'volume_trend': volume_trend,
         'pressure': pressure,
-        'strength': round(strength, 2)
+        'strength': round(strength, 2),
+        'whale_activity': {
+            'detected': whale_activity_detected,
+            'sentiment': whale_sentiment,
+            'ratio': round(volume_ratio, 2)
+        }
     }
 
 
-def analyze_social_sentiment(symbol: str) -> Dict:
+import asyncio
+from app.social_sentiment import get_social_sentiment
+
+async def analyze_social_sentiment(symbol: str) -> Dict:
     """
     Analyze social media sentiment and news trends.
-    
-    This is a placeholder that returns simulated sentiment.
-    In production, you would integrate with:
-    - Twitter API (crypto mentions, hashtags)
-    - Reddit API (r/cryptocurrency, r/bitcoin sentiment)
-    - News APIs (CryptoPanic, CoinTelegraph)
-    - Google Trends
-    - Fear & Greed Index
-    
-    Returns:
-        {
-            'sentiment_score': 0.65,  # -1 to 1 (bearish to bullish)
-            'sentiment': 'BULLISH',  # BEARISH/NEUTRAL/BULLISH
-            'fear_greed_index': 55,  # 0-100
-            'news_mentions': 150,  # Number of news articles
-            'social_volume': 'HIGH',  # LOW/MEDIUM/HIGH
-            'trending': True,  # Is symbol trending?
-            'confidence': 0.60
-        }
+    Uses real-time data from Alternative.me and CryptoPanic.
     """
-    # Extract base symbol (e.g., BTC from BTC/USDT)
-    base_symbol = symbol.split('/')[0] if '/' in symbol else symbol
+    # In production, we would get the API key from config/DB
+    # For now, we'll try to get it from environment or pass None (free tier only)
+    import os
+    api_key = os.getenv("CRYPTOPANIC_API_KEY")
     
-    # Simulated sentiment based on symbol popularity
-    # In production, replace with real API calls
-    popular_coins = {
-        'BTC': {'sentiment': 0.70, 'fg_index': 65, 'mentions': 500, 'volume': 'HIGH'},
-        'ETH': {'sentiment': 0.65, 'fg_index': 60, 'mentions': 350, 'volume': 'HIGH'},
-        'BNB': {'sentiment': 0.55, 'fg_index': 58, 'mentions': 200, 'volume': 'MEDIUM'},
-        'SOL': {'sentiment': 0.60, 'fg_index': 62, 'mentions': 180, 'volume': 'MEDIUM'},
-        'DOGE': {'sentiment': 0.50, 'fg_index': 55, 'mentions': 250, 'volume': 'HIGH'},
-    }
-    
-    data = popular_coins.get(base_symbol, {
-        'sentiment': 0.50,
-        'fg_index': 50,
-        'mentions': 50,
-        'volume': 'LOW'
-    })
-    
-    sentiment_score = data['sentiment']
-    
-    if sentiment_score > 0.6:
-        sentiment = 'BULLISH'
-    elif sentiment_score < 0.4:
-        sentiment = 'BEARISH'
-    else:
-        sentiment = 'NEUTRAL'
-    
-    trending = data['mentions'] > 200 and data['volume'] == 'HIGH'
-    
-    return {
-        'sentiment_score': round(sentiment_score, 2),
-        'sentiment': sentiment,
-        'fear_greed_index': data['fg_index'],
-        'news_mentions': data['mentions'],
-        'social_volume': data['volume'],
-        'trending': trending,
-        'confidence': 0.60  # Medium confidence for simulated data
-    }
+    return await get_social_sentiment(symbol, api_key)
 
 
-def forecast_price_hourly(candles: List[Dict], forecast_hours: int = 6) -> Dict:
+async def forecast_price_hourly(candles: List[Dict], forecast_hours: int = 6) -> Dict:
     """
     Comprehensive price forecast for next N hours.
     
@@ -587,34 +553,9 @@ def forecast_price_hourly(candles: List[Dict], forecast_hours: int = 6) -> Dict:
             'current_price': 3500.0,
             'forecasts': [
                 {'hour': 1, 'predicted_price': 3520.0, 'confidence': 0.75},
-                {'hour': 2, 'predicted_price': 3535.0, 'confidence': 0.70},
                 ...
             ],
-            'trend_analysis': {
-                'short_term': 'UP',
-                'medium_term': 'UP',
-                'long_term': 'SIDEWAYS'
-            },
-            'price_targets': {
-                'optimistic': 3600.0,
-                'realistic': 3550.0,
-                'pessimistic': 3480.0
-            },
-            'key_levels': {
-                'resistance': 3600.0,
-                'support': 3400.0,
-                'breakout_target': 3650.0
-            },
-            'risk_metrics': {
-                'volatility': 2.5,  # %
-                'confidence': 0.72,
-                'reliability': 'MEDIUM'  # HIGH/MEDIUM/LOW
-            },
-            'trading_recommendation': {
-                'action': 'BUY',
-                'timing': 'FAVORABLE',
-                'reasoning': 'Strong uptrend with bullish momentum'
-            }
+            ...
         }
     """
     if not candles or len(candles) < 24:
@@ -665,7 +606,7 @@ def forecast_price_hourly(candles: List[Dict], forecast_hours: int = 6) -> Dict:
     volatility = calculate_volatility(closes, period=24)
     
     # 10. Social sentiment (news & market mood)
-    sentiment = analyze_social_sentiment(symbol)
+    sentiment = await analyze_social_sentiment(symbol)
     
     # Multi-timeframe trend analysis
     short_term_trend = calculate_linear_regression(closes[-6:], periods=6)['trend']
@@ -760,6 +701,16 @@ def forecast_price_hourly(candles: List[Dict], forecast_hours: int = 6) -> Dict:
     elif volume_analysis['pressure'] == 'SELLING':
         bearish_signals += 1.0 * volume_analysis['strength']
     total_weight += 1.0
+    
+    # Signal 7.5: Whale Activity (High Impact)
+    whale = volume_analysis.get('whale_activity', {})
+    if whale.get('detected'):
+        if whale.get('sentiment') == 'BULLISH_WHALE':
+            bullish_signals += 2.0  # Whales have high impact
+            total_weight += 2.0
+        elif whale.get('sentiment') == 'BEARISH_WHALE':
+            bearish_signals += 2.0
+            total_weight += 2.0
     
     # Signal 8: Social Sentiment (weight: 0.5)
     if sentiment['sentiment'] == 'BULLISH':
@@ -901,9 +852,9 @@ def forecast_price_hourly(candles: List[Dict], forecast_hours: int = 6) -> Dict:
         timing_factors.append(('BB squeeze - breakout imminent', 0.6))
     
     # Factor 5: Social sentiment boost
-    if sentiment['trending'] and sentiment['sentiment'] == 'BULLISH' and action == 'BUY':
+    if sentiment.get('trending') and sentiment['sentiment'] == 'BULLISH' and action == 'BUY':
         timing_factors.append(('Trending with bullish sentiment', 0.6))
-    elif sentiment['trending'] and sentiment['sentiment'] == 'BEARISH' and action == 'SELL':
+    elif sentiment.get('trending') and sentiment['sentiment'] == 'BEARISH' and action == 'SELL':
         timing_factors.append(('Trending with bearish sentiment', 0.6))
     
     # Calculate average timing score
@@ -939,7 +890,11 @@ def forecast_price_hourly(candles: List[Dict], forecast_hours: int = 6) -> Dict:
     if volume_analysis['pressure'] != 'NEUTRAL':
         reasoning_parts.append(f"{volume_analysis['pressure']} pressure")
     
-    if sentiment['trending']:
+    if volume_analysis.get('whale_activity', {}).get('detected'):
+        whale_sent = volume_analysis['whale_activity']['sentiment']
+        reasoning_parts.append(f"🐋 WHALE DETECTED ({whale_sent})")
+    
+    if sentiment.get('trending'):
         reasoning_parts.append(f"Trending {sentiment['sentiment'].lower()}")
     
     # Timing factors
@@ -1059,13 +1014,14 @@ Predicted (6h): ${avg_forecast:,.2f} {direction} ({change_pct:+.2f}%)
    • RSI: {rsi['rsi']:.0f} ({rsi['signal']})
    • MACD: {macd['signal']} (histogram: {macd['histogram']:.1f})
    • Volume: {volume['pressure']} pressure ({volume['volume_trend']})
+   • Whale Activity: {'🐋 DETECTED' if volume.get('whale_activity', {}).get('detected') else 'None'}
    • Volatility: {volatility:.1f}%
 
 🌐 Social Sentiment
    • Mood: {sentiment['sentiment']} ({sentiment['sentiment_score']*100:.0f}%)
    • Fear & Greed: {sentiment['fear_greed_index']}/100
-   • News Mentions: {sentiment['news_mentions']}
-   • Trending: {'YES' if sentiment['trending'] else 'NO'}
+   • News Mentions: {sentiment.get('news_mentions', sentiment.get('news_count', 0))}
+   • Trending: {'YES' if sentiment.get('trending') else 'NO'}
 
 🎯 Price Targets
    • Optimistic: ${forecast['price_targets']['optimistic']:,.2f}

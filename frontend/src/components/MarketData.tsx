@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { BarChart3, TrendingUp, RefreshCw } from 'lucide-react';
+import { BarChart3, TrendingUp, RefreshCw, ZoomIn, ZoomOut } from 'lucide-react';
 import { createChart, ColorType } from 'lightweight-charts';
 import { marketAPI } from '../api';
 
@@ -14,16 +14,18 @@ export default function MarketData({ symbol }: MarketDataProps) {
   const [historicalForecasts, setHistoricalForecasts] = useState<any[]>([]);
   const historicalSeriesRefs = useRef<any[]>([]);
   const [showForecast, setShowForecast] = useState(true);
-   const [showHistorical, setShowHistorical] = useState(true);
+  const [showHistorical, setShowHistorical] = useState(true);
   const [tooltipData, setTooltipData] = useState<any>(null);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
   const seriesRef = useRef<any>(null);
   const forecastSeriesRef = useRef<any>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
+  const hasInitializedZoom = useRef(false);
 
   // Load market data when symbol changes
   useEffect(() => {
+    hasInitializedZoom.current = false; // Reset zoom init on symbol change
     const loadMarketData = async () => {
       try {
         const [tickerRes, candlesRes, forecastRes, historyRes] = await Promise.all([
@@ -65,6 +67,16 @@ export default function MarketData({ symbol }: MarketDataProps) {
       },
       width: chartContainerRef.current.clientWidth,
       height: 400,
+      localization: {
+        // Use client's local timezone for axis labels
+        timeFormatter: (timestamp: number) => {
+          return new Date(timestamp * 1000).toLocaleTimeString(undefined, {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false,
+          });
+        },
+      },
       grid: {
         vertLines: { color: 'rgba(255, 255, 255, 0.1)' },
         horzLines: { color: 'rgba(255, 255, 255, 0.1)' },
@@ -76,6 +88,15 @@ export default function MarketData({ symbol }: MarketDataProps) {
         borderColor: 'rgba(107, 114, 128, 0.4)', // subtle dark gray axis line
         timeVisible: true, // Show time on X-axis
         secondsVisible: false, // Don't show seconds
+      },
+      handleScale: {
+        mouseWheel: false, // Disable zoom on scroll
+      },
+      handleScroll: {
+        mouseWheel: false, // Disable scroll on scroll (prevents page scroll hijacking)
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
       },
     });
 
@@ -139,15 +160,15 @@ export default function MarketData({ symbol }: MarketDataProps) {
       // Format timestamp to readable date and time
       const timestamp = param.time as number;
       const date = new Date(timestamp * 1000);
-      const dateStr = date.toLocaleDateString('en-US', {
+      const dateStr = date.toLocaleDateString(undefined, {
         year: 'numeric',
         month: 'short',
         day: 'numeric',
       });
-      const timeStr = date.toLocaleTimeString('en-US', {
+      const timeStr = date.toLocaleTimeString(undefined, {
         hour: '2-digit',
         minute: '2-digit',
-        hour12: true,
+        hour12: false,
       });
 
       // Update tooltip content
@@ -200,7 +221,12 @@ export default function MarketData({ symbol }: MarketDataProps) {
     }));
     try {
       seriesRef.current.setData(formattedCandles);
-      chartRef.current?.timeScale().fitContent();
+      // Only fit content on first load to respect user zoom
+      if (!hasInitializedZoom.current && formattedCandles.length > 0) {
+        chartRef.current?.timeScale().fitContent();
+        // We don't set hasInitializedZoom to true here because we might want to wait for forecast data
+        // to set the final range including the future.
+      }
     } catch (e) {
       // Ignore updates if chart was disposed between renders
       console.warn('Chart update skipped:', e);
@@ -271,21 +297,45 @@ export default function MarketData({ symbol }: MarketDataProps) {
       }
 
       // Ensure the future points are visible by extending the visible range
-      const firstCandleTime = candles[0]?.timestamp ? candles[0].timestamp / 1000 : currentTime - 100 * 3600;
-      const lastForecastTime = forecastData[forecastData.length - 1]?.time ?? currentTime;
-      try {
-        chartRef.current?.timeScale().setVisibleRange({ from: firstCandleTime, to: lastForecastTime });
-      } catch {}
+      // Only do this on first load to respect user zoom
+      if (!hasInitializedZoom.current) {
+        const firstCandleTime = candles[0]?.timestamp ? candles[0].timestamp / 1000 : currentTime - 100 * 3600;
+        const lastForecastTime = forecastData[forecastData.length - 1]?.time ?? currentTime;
+        try {
+          chartRef.current?.timeScale().setVisibleRange({ from: firstCandleTime, to: lastForecastTime });
+          hasInitializedZoom.current = true;
+        } catch {}
+      }
     } catch (e) {
       console.warn('Forecast update skipped:', e);
     }
   }, [forecast, candles, showForecast, historicalForecasts]);
 
+  const handleZoom = (direction: 'in' | 'out') => {
+    if (!chartRef.current) return;
+    const timeScale = chartRef.current.timeScale();
+    const range = timeScale.getVisibleLogicalRange();
+    if (!range) return;
+
+    const span = range.to - range.from;
+    const factor = direction === 'in' ? 0.8 : 1.25; // 20% zoom in, 25% zoom out
+    const newSpan = span * factor;
+    const center = (range.from + range.to) / 2;
+    
+    timeScale.setVisibleLogicalRange({
+      from: center - newSpan / 2,
+      to: center + newSpan / 2,
+    });
+    
+    // Mark zoom as initialized so auto-fit doesn't override it
+    hasInitializedZoom.current = true;
+  };
+
   // Removed renderChart; chart lifecycle handled in effects above
 
   return (
     <div className="section-card">
-      <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <BarChart3 />
           Market Data & Candlestick Chart
@@ -363,6 +413,50 @@ export default function MarketData({ symbol }: MarketDataProps) {
             <RefreshCw size={16} />
           </button>
         </div>
+      </div>
+
+      {/* Zoom Controls Row */}
+      <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', paddingLeft: '5px' }}>
+          <button
+            onClick={() => handleZoom('in')}
+            style={{
+              padding: '6px 12px',
+              background: 'rgba(0, 0, 0, 0.2)',
+              border: '1px solid rgba(0, 0, 0, 0.1)',
+              borderRadius: '6px',
+              color: '#2D2520',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s',
+              fontSize: '0.85rem',
+              fontWeight: '600'
+            }}
+            title="Zoom In"
+          >
+            <ZoomIn size={14} /> Zoom In
+          </button>
+          <button
+            onClick={() => handleZoom('out')}
+            style={{
+              padding: '6px 12px',
+              background: 'rgba(0, 0, 0, 0.2)',
+              border: '1px solid rgba(0, 0, 0, 0.1)',
+              borderRadius: '6px',
+              color: '#2D2520',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.2s',
+              fontSize: '0.85rem',
+              fontWeight: '600'
+            }}
+            title="Zoom Out"
+          >
+            <ZoomOut size={14} /> Zoom Out
+          </button>
       </div>
 
       {ticker && (

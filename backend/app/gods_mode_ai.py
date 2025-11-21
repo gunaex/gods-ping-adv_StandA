@@ -304,7 +304,8 @@ class MetaModel_Gating:
         model_a_output: Dict,
         model_b_output: Dict,
         current_price: float,
-        position: str = "FLAT"  # FLAT | LONG
+        position: str = "FLAT",  # FLAT | LONG
+        sentiment: Dict = None   # Social Sentiment Data
     ) -> Dict:
         """
         Meta-decision logic: Gate between Model A and Model B
@@ -330,21 +331,39 @@ class MetaModel_Gating:
         rsi = model_b_output['features']['rsi']
         volatility = model_b_output['features']['volatility']
         
+        # Sentiment Analysis (Boost/Penalty)
+        sentiment_boost = 0.0
+        sentiment_reason = ""
+        if sentiment:
+            score = sentiment.get('sentiment_score', 0)
+            if score > 0.2:  # Bullish sentiment
+                sentiment_boost = 0.1
+                sentiment_reason = f" + Bullish Sentiment ({score:.2f})"
+            elif score < -0.2:  # Bearish sentiment
+                sentiment_boost = -0.1
+                sentiment_reason = f" + Bearish Sentiment ({score:.2f})"
+        
         # Gating Decision Tree
         
         # GATE 0: High-confidence Model B signals pass through (NEW)
         if classifier_confidence >= 0.75 and classifier_signal != 'HOLD':
-            reason = f"High confidence Model B ({classifier_confidence:.0%}): {regime}, RSI={rsi:.0f}"
+            # Apply sentiment boost if aligned
+            final_confidence = classifier_confidence
+            if (classifier_signal == 'BUY' and sentiment_boost > 0) or \
+               (classifier_signal == 'SELL' and sentiment_boost < 0):
+                final_confidence = min(0.95, final_confidence + abs(sentiment_boost))
+                
+            reason = f"High confidence Model B ({classifier_confidence:.0%}): {regime}, RSI={rsi:.0f}{sentiment_reason}"
             return MetaModel_Gating._format_output(
                 classifier_signal,
                 current_price,
-                classifier_confidence,
+                final_confidence,
                 reason
             )
         
         # GATE 1: High Volatility → Trust Model B (regime classifier) - RELAXED threshold
         if volatility > 0.025:  # Reduced from 0.03
-            reason = f"High volatility ({volatility:.1%}): Following Model B regime classifier ({regime})"
+            reason = f"High volatility ({volatility:.1%}): Following Model B regime classifier ({regime}){sentiment_reason}"
             return MetaModel_Gating._format_output(
                 classifier_signal,
                 current_price,
@@ -359,15 +378,15 @@ class MetaModel_Gating:
             # Model A predicts UP movement (>0.5%) and RSI not overbought
             if price_diff_pct > 0.005 and rsi < 65:  # Relaxed from 1% and 60
                 signal = "BUY" if position != "LONG" else "HOLD"
-                confidence = min(0.85, classifier_confidence + abs(momentum) * 0.5)
-                reason = f"Range market: Model A forecasts +{price_diff_pct:.2%} rise, RSI={rsi:.0f}"
+                confidence = min(0.85, classifier_confidence + abs(momentum) * 0.5 + max(0, sentiment_boost))
+                reason = f"Range market: Model A forecasts +{price_diff_pct:.2%} rise, RSI={rsi:.0f}{sentiment_reason}"
                 return MetaModel_Gating._format_output(signal, current_price, confidence, reason)
             
             # Model A predicts DOWN movement (<-0.5%) and RSI not oversold
             elif price_diff_pct < -0.005 and rsi > 40:  # Relaxed from -1%
                 signal = "SELL" if position == "LONG" else "HOLD"
-                confidence = min(0.85, classifier_confidence + abs(momentum) * 0.5)
-                reason = f"Range market: Model A forecasts {price_diff_pct:.2%} drop, RSI={rsi:.0f}"
+                confidence = min(0.85, classifier_confidence + abs(momentum) * 0.5 + abs(min(0, sentiment_boost)))
+                reason = f"Range market: Model A forecasts {price_diff_pct:.2%} drop, RSI={rsi:.0f}{sentiment_reason}"
                 return MetaModel_Gating._format_output(signal, current_price, confidence, reason)
             
             else:
@@ -388,9 +407,9 @@ class MetaModel_Gating:
                 confidence = classifier_confidence
                 if forecast_agrees:
                     confidence = min(0.90, confidence + 0.10)
-                    reason = f"Downtrend: Both models agree SELL (forecast: {forecast_price:.2f})"
+                    reason = f"Downtrend: Both models agree SELL (forecast: {forecast_price:.2f}){sentiment_reason}"
                 else:
-                    reason = f"Downtrend: Model B signals SELL, Model A neutral"
+                    reason = f"Downtrend: Model B signals SELL, Model A neutral{sentiment_reason}"
                 
                 return MetaModel_Gating._format_output(
                     "SELL",
@@ -405,7 +424,7 @@ class MetaModel_Gating:
                     "BUY",
                     current_price,
                     classifier_confidence,
-                    f"Downtrend: Oversold bounce opportunity (RSI={rsi:.0f})"
+                    f"Downtrend: Oversold bounce opportunity (RSI={rsi:.0f}){sentiment_reason}"
                 )
             
             else:
@@ -418,7 +437,7 @@ class MetaModel_Gating:
         
         # GATE 4: Weak Trend or Uncertain → Conservative HOLD or follow high-confidence Model B
         if classifier_confidence > 0.75:
-            reason = f"Model B high confidence ({classifier_confidence:.0%}): {regime}"
+            reason = f"Model B high confidence ({classifier_confidence:.0%}): {regime}{sentiment_reason}"
             return MetaModel_Gating._format_output(
                 classifier_signal,
                 current_price,
@@ -467,6 +486,11 @@ async def run_gods_mode(candles: List[dict], current_position: str = "FLAT") -> 
             "reason": "Insufficient data (need 50+ candles)"
         }
     
+    # Fetch Social Sentiment (Real-time)
+    from app.price_forecaster import analyze_social_sentiment
+    symbol = candles[0].get('symbol', 'BTC/USDT')
+    sentiment = await analyze_social_sentiment(symbol)
+    
     # Run Model A: Forecaster
     try:
         model_a_output = ModelA_Forecaster.predict(candles, forecast_hours=1)
@@ -497,13 +521,15 @@ async def run_gods_mode(candles: List[dict], current_position: str = "FLAT") -> 
         model_a_output,
         model_b_output,
         current_price,
-        current_position
+        current_position,
+        sentiment  # Pass sentiment to meta-model
     )
     
     # Add debug info
     decision['_debug'] = {
         'model_a': model_a_output,
         'model_b': model_b_output,
+        'sentiment': sentiment,
         'current_position': current_position
     }
     

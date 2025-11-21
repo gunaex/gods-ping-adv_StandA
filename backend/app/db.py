@@ -14,10 +14,14 @@ load_dotenv()
 # By default, use SQLite for local development and testing.
 # For production (Render), set DATABASE_URL to your PostgreSQL connection string in Render's environment settings.
 # Example: postgresql://user:password@host:port/dbname
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "sqlite:///./gods_ping.db"  # Local default
-)
+# Ensure default SQLite DB path is absolute and located in the backend folder so it's
+# consistent regardless of the process working directory.
+from pathlib import Path
+
+default_db_path = Path(__file__).resolve().parent.parent / "gods_ping.db"
+default_db_url = f"sqlite:///{default_db_path.as_posix()}"
+
+DATABASE_URL = os.getenv("DATABASE_URL", default_db_url)
 
 # Render/Heroku sometimes use 'postgres://' prefix, but SQLAlchemy expects 'postgresql://'
 if DATABASE_URL.startswith("postgres://"):

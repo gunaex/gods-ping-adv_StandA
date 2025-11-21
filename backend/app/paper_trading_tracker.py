@@ -48,8 +48,8 @@ class PaperTradingSnapshot(Base):
     sharpe_ratio = Column(Float, default=0.0)       # Risk-adjusted return
 
 
-def calculate_paper_performance(user_id: int, symbol: str, bot_type: str, db: Session) -> dict:
-    """Calculate current paper trading performance"""
+def calculate_paper_performance(user_id: int, symbol: str, bot_type: str, db: Session, mode: str = 'paper', current_price: float = None) -> dict:
+    """Calculate current trading performance (paper or live)"""
     # Get config
     config = db.query(BotConfig).filter(BotConfig.user_id == user_id).first()
     if not config:
@@ -57,19 +57,30 @@ def calculate_paper_performance(user_id: int, symbol: str, bot_type: str, db: Se
     
     starting_balance = config.budget
     
-    # Get all paper trades for this symbol
+    # Determine status filter based on mode
+    status_filter = ['completed_paper', 'simulated']
+    if mode == 'live':
+        status_filter = ['completed', 'completed_live']
+    
+    # Get all trades for this symbol
     trades = db.query(Trade).filter(
         Trade.user_id == user_id,
         Trade.symbol == symbol,
         Trade.bot_type == bot_type,
-        Trade.status.in_(['completed_paper', 'simulated'])
+        Trade.status.in_(status_filter)
     ).order_by(Trade.timestamp).all()
     
     if not trades:
+        # No trades yet - return initial 50/50 split like the balance API
+        initial_cash = starting_balance / 2  # 50% in USDT
+        initial_position_value = starting_balance / 2  # 50% in asset value
+        
         return {
             'starting_balance': starting_balance,
             'current_balance': starting_balance,
-            'quantity_held': 0.0,
+            'cash_balance': initial_cash,  # FIX: Should be 50% of budget, not 0
+            'position_value': initial_position_value,  # FIX: Should be 50% of budget
+            'quantity_held': 0.0,  # Will be calculated by market.py based on current price
             'avg_buy_price': 0.0,
             'current_price': 0.0,
             'realized_pl': 0.0,
@@ -77,12 +88,18 @@ def calculate_paper_performance(user_id: int, symbol: str, bot_type: str, db: Se
             'total_pl': 0.0,
             'pl_percent': 0.0,
             'total_trades': 0,
+            'buy_trades': 0,
+            'sell_trades': 0,
             'winning_trades': 0,
             'losing_trades': 0,
             'win_rate': 0.0
         }
     
     # Calculate position
+    # Start from a 50/50 allocation by default (half cash, half position) so
+    # that if there are trades but no prior BUYs (e.g. a lone SELL), we don't
+    # incorrectly treat the account as all cash. We'll model an implicit
+    # initial buy for performance calculation at the first trade price.
     quantity_held = 0.0
     total_cost = 0.0
     cash_balance = starting_balance
@@ -91,6 +108,24 @@ def calculate_paper_performance(user_id: int, symbol: str, bot_type: str, db: Se
     buy_trades = []
     sell_trades = []
     
+    # If the first trade is a SELL and there are no prior BUYs, assume an
+    # implicit initial position representing the 50% allocation at the price
+    # of the first trade. This preserves the expected UX where starting
+    # balances are split 50/50 until explicit buys/sells change them.
+    
+    # Check if we have any BUY trades
+    buy_trades_check = [t for t in trades if t.side == 'BUY']
+    
+    # Only apply implicit 50/50 if we have trades but NO buys (i.e. started with a SELL)
+    if trades and not buy_trades_check:
+        first_price = trades[0].filled_price or trades[0].price
+        if first_price and first_price > 0:
+            # implicit 50% position value
+            implicit_position_value = starting_balance / 2.0
+            quantity_held = implicit_position_value / first_price
+            total_cost = quantity_held * first_price
+            cash_balance = starting_balance - implicit_position_value
+
     for trade in trades:
         price = trade.filled_price or trade.price
         amount = trade.amount
@@ -119,7 +154,8 @@ def calculate_paper_performance(user_id: int, symbol: str, bot_type: str, db: Se
                 sell_trades.append((trade, sale_pl))
     
     # Get current market price
-    current_price = trades[-1].filled_price or trades[-1].price
+    if current_price is None:
+        current_price = trades[-1].filled_price or trades[-1].price
     
     # Calculate unrealized P/L on remaining position
     avg_buy_price = total_cost / quantity_held if quantity_held > 0 else 0

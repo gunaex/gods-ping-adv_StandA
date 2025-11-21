@@ -91,6 +91,12 @@ from app.logging_models import Log, LogCategory, LogLevel
 
 **Verified**: Active environment is `.venv` with all packages working
 
+### ✅ 5. Forecast Endpoint Fix (500 Error)
+**Issue**: `KeyError: 'trending'` in `backend/app/price_forecaster.py` causing 500 Internal Server Error on forecast endpoint.
+**Root Cause**: `backend/app/social_sentiment.py` was not including the `trending` key in its return dictionary, even though it calculated it.
+**Fix**: Updated `backend/app/social_sentiment.py` to include `trending` in the returned dictionary.
+**Verified**: Ran `test_crash.py` and `test_sentiment.py` to confirm the fix.
+
 ---
 
 ## Verification Results

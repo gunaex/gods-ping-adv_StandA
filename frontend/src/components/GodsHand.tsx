@@ -351,17 +351,54 @@ export default function GodsHand({ symbol }: GodsHandProps) {
         justifyContent: 'space-between',
         border: `1px solid ${colors.border.default}`,
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <div style={{
-            width: '14px',
-            height: '14px',
-            borderRadius: typography.borderRadius.round,
-            background: status?.gods_hand === 'running' ? colors.trading.buy.color : colors.text.muted,
-            boxShadow: status?.gods_hand === 'running' ? `0 0 12px ${colors.trading.buy.color}` : 'none',
-          }} />
-          <span style={{ fontSize: '1rem', color: colors.text.primary, fontWeight: 600 }}>
-            Status: {status?.gods_hand || 'stopped'}
-          </span>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{
+              width: '14px',
+              height: '14px',
+              borderRadius: typography.borderRadius.round,
+              background: status?.gods_hand === 'running' ? colors.trading.buy.color : colors.text.muted,
+              boxShadow: status?.gods_hand === 'running' ? `0 0 12px ${colors.trading.buy.color}` : 'none',
+            }} />
+            <span style={{ fontSize: '1rem', color: colors.text.primary, fontWeight: 600 }}>
+              Status: {status?.gods_hand || 'stopped'}
+            </span>
+          </div>
+          
+          {/* Kill-Switch Status Display */}
+          {status?.kill_switch_cooldown?.active && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '6px 10px',
+              background: colors.status.warning.bg,
+              border: `1px solid ${colors.status.warning.border}`,
+              borderRadius: typography.borderRadius.sm,
+              fontSize: '0.85rem',
+              color: colors.status.warning.color,
+            }}>
+              <span>⏸️</span>
+              <span>Kill-switch cooldown: {status.kill_switch_cooldown.remaining_minutes}m remaining</span>
+            </div>
+          )}
+          
+          {status?.kill_switch_breach_warning && (
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '6px 10px',
+              background: colors.status.error.bg,
+              border: `1px solid ${colors.status.error.border}`,
+              borderRadius: typography.borderRadius.sm,
+              fontSize: '0.85rem',
+              color: colors.status.error.color,
+            }}>
+              <span>⚠️</span>
+              <span>Breach warning: {status.kill_switch_breach_warning.consecutive_breaches}/{status.kill_switch_breach_warning.required_breaches}</span>
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', gap: '12px' }}>
@@ -443,6 +480,7 @@ function GodsHandSettingsModal({ config, onClose, onSave, onSaveRunSettings, con
     min_confidence: config?.min_confidence || 0.7,
     gods_hand_enabled: config?.gods_hand_enabled || false,
     gods_mode_enabled: config?.gods_mode_enabled || false,
+    tennis_mode_enabled: config?.tennis_mode_enabled || false,
   });
 
   const [runSettings, setRunSettings] = useState({
@@ -615,6 +653,65 @@ function GodsHandSettingsModal({ config, onClose, onSave, onSaveRunSettings, con
                 position: 'absolute',
                 top: '2px',
                 left: settings.gods_mode_enabled ? '30px' : '2px',
+                transition: 'all 0.3s ease',
+                boxShadow: colors.shadow.sm
+              }} />
+            </div>
+          </div>
+        </div>
+
+        {/* Tennis Mode Toggle - Sideways Sniper */}
+        <div style={{
+          padding: '20px',
+          background: `linear-gradient(135deg, ${colors.primary.sage}15 0%, ${colors.primary.clay}15 100%)`,
+          border: `2px solid ${settings.tennis_mode_enabled ? colors.primary.sage : colors.border.default}`,
+          borderRadius: typography.borderRadius.md,
+          marginBottom: '20px',
+          cursor: 'pointer',
+          transition: 'all 0.3s ease',
+        }}
+        onClick={() => setSettings({ ...settings, tennis_mode_enabled: !settings.tennis_mode_enabled })}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: '1.2rem', fontWeight: 700, color: colors.text.primary, marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                🎾 {settings.tennis_mode_enabled ? 'TENNIS MODE ON' : 'Tennis Mode'}
+              </div>
+              <div style={{ fontSize: '0.9rem', color: colors.text.secondary, marginBottom: '8px' }}>
+                {settings.tennis_mode_enabled 
+                  ? 'Sideways Sniper active: Hunting for mean reversion bounces'
+                  : 'Sideways Market Strategy (Risky)'}
+              </div>
+              {settings.tennis_mode_enabled && (
+                <div style={{ 
+                  fontSize: '0.85rem', 
+                  color: colors.primary.sage,
+                  fontWeight: 600,
+                  marginTop: '8px',
+                  paddingTop: '8px',
+                  borderTop: `1px solid ${colors.border.subtle}`
+                }}>
+                  ✅ Active when ADX &lt; 25 (Non-trending)
+                </div>
+              )}
+            </div>
+            <div style={{
+              width: '60px',
+              height: '32px',
+              background: settings.tennis_mode_enabled ? colors.primary.sage : colors.text.muted,
+              borderRadius: '16px',
+              position: 'relative',
+              transition: 'all 0.3s ease',
+              boxShadow: settings.tennis_mode_enabled ? `0 0 12px ${colors.primary.sage}50` : 'none'
+            }}>
+              <div style={{
+                width: '28px',
+                height: '28px',
+                background: colors.background.primary,
+                borderRadius: '50%',
+                position: 'absolute',
+                top: '2px',
+                left: settings.tennis_mode_enabled ? '30px' : '2px',
                 transition: 'all 0.3s ease',
                 boxShadow: colors.shadow.sm
               }} />
