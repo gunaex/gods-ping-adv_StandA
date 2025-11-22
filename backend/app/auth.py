@@ -23,9 +23,9 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 # Hardcoded Admin Credentials
-ADMIN_USERNAME = "Admin"
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Admin")
 # Admin password - ensure to change in production
-ADMIN_PASSWORD = "K@nph0ng69"
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
 ADMIN_PASSWORD_HASH = None  # Will be generated on first use
 
 
@@ -36,7 +36,6 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     """Hash password"""
-    return pwd_context.hash(password)
     return pwd_context.hash(password)
 
 
