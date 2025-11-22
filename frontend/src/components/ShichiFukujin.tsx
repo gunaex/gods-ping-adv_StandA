@@ -3,7 +3,7 @@ import {
   LogOut, Settings, Clock, FileText 
 } from 'lucide-react';
 import { useStore } from '../store';
-import { tradingAPI, API_BASE_URL } from '../api';
+import { tradingAPI } from '../api';
 import { wsClient } from '../websocket';
 import TradingPairSelector from './TradingPairSelector';
 import AIRecommendation from './AIRecommendation';
@@ -95,9 +95,9 @@ export default function ShichiFukujin() {
       }}>
         <div>
           <h1 style={{ fontSize: '2.5rem', marginBottom: '5px' }}>
-            Gods Ping
+            Gods Ping (Pro)
           </h1>
-          <p style={{ opacity: 0.8 }}>七福神 Shichi-Fukujin Trading Platform</p>
+          <p style={{ opacity: 0.8 }}>七福神 Shichi-Fukujin Trading Platform Pro Version (Paid)</p>
           <p style={{ 
             opacity: 0.7, 
             fontSize: '0.9rem', 
@@ -181,6 +181,7 @@ export default function ShichiFukujin() {
       {/* Kill-Switch Modal */}
       {killSwitchLog && (
         <KillSwitchModal
+          logId={killSwitchLog.id}
           timestamp={killSwitchLog.timestamp}
           message={killSwitchLog.message}
           details={killSwitchLog.details}
