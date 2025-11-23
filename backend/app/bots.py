@@ -24,6 +24,19 @@ bot_tasks = {}
 kill_switch_breach_history = {}
 
 
+async def log_and_broadcast(db: Session, log: Log):
+    """Helper to save log to DB and broadcast via WebSocket"""
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    try:
+        from app.websocket_manager import ws_manager
+        if log.user_id:
+            await ws_manager.broadcast_log(log.user_id, log.to_dict())
+    except Exception as e:
+        print(f"⚠️ Log broadcast failed: {e}")
+
+
 async def start_grid_bot(user_id: int, config: BotConfig, db: Session) -> dict:
     """
     Start Grid Trading Bot
@@ -379,8 +392,7 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
         ai_recommendation=action,
         ai_confidence=str(confidence),
     )
-    db.add(thinking_log)
-    db.commit()
+    await log_and_broadcast(db, thinking_log)
 
     # Confidence gate
     if confidence < config.min_confidence:
@@ -402,8 +414,7 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
             ai_executed="no",
             execution_reason=f"Confidence {confidence} below minimum {config.min_confidence}"
         )
-        db.add(action_log)
-        db.commit()
+        await log_and_broadcast(db, action_log)
         # Notify on AI failure/skipped action (once per hour)
         maybe_send_notification(
             subject=f"Gods Hand: AI Skipped Action for {symbol}",
@@ -444,8 +455,7 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
             ai_executed="no",
             execution_reason=incremental_calc['reason']
         )
-        db.add(action_log)
-        db.commit()
+        await log_and_broadcast(db, action_log)
         # Notify on AI failure/skipped action (once per hour)
         maybe_send_notification(
             subject=f"Gods Hand: Position Limit for {symbol}",
@@ -516,8 +526,7 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
                 ai_confidence=str(confidence),
                 ai_executed="yes",
             )
-            db.add(action_log)
-            db.commit()
+            await log_and_broadcast(db, action_log)
             
             # Calculate P/L and account balance for email
             updated_position = get_current_position(user_id, symbol, db)
@@ -597,8 +606,7 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
                 ai_confidence=str(confidence),
                 ai_executed="yes",
             )
-            db.add(action_log)
-            db.commit()
+            await log_and_broadcast(db, action_log)
             
             # Persist live trade record for performance stats
             try:
@@ -650,8 +658,7 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
             ai_executed="no",
             execution_reason="Recommendation HOLD"
         )
-        db.add(action_log)
-        db.commit()
+        await log_and_broadcast(db, action_log)
         # Notify on AI failure/skipped action (once per hour)
         maybe_send_notification(
             subject=f"Gods Hand: AI HOLD for {symbol}",
@@ -751,8 +758,7 @@ async def _gods_hand_loop(user_id: int, interval_seconds: int):
                             user_id=user_id,
                             bot_type="gods_hand",
                         )
-                        dbi.add(cooldown_log)
-                        dbi.commit()
+                        await log_and_broadcast(dbi, cooldown_log)
                         
                         await asyncio.sleep(interval_seconds)
                         continue
@@ -809,9 +815,7 @@ async def _gods_hand_loop(user_id: int, interval_seconds: int):
                         user_id=user_id,
                         bot_type="gods_hand",
                     )
-                    dbi.add(err_log)
-                    dbi.commit()
-                    dbi.refresh(err_log)
+                    await log_and_broadcast(dbi, err_log)
                     
                     # Broadcast via WebSocket for instant notification
                     try:
@@ -853,8 +857,7 @@ async def _gods_hand_loop(user_id: int, interval_seconds: int):
                     user_id=user_id,
                     bot_type="gods_hand",
                 )
-                dbi.add(err_log)
-                dbi.commit()
+                await log_and_broadcast(dbi, err_log)
             finally:
                 dbi.close()
 
@@ -1023,3 +1026,16 @@ async def get_bot_status(user_id: int, db: Session) -> dict:
         "kill_switch_breach_warning": breach_info,
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+async def log_and_broadcast(db: Session, log: Log):
+    """Helper to save log to DB and broadcast via WebSocket"""
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    try:
+        from app.websocket_manager import ws_manager
+        if log.user_id:
+            await ws_manager.broadcast_log(log.user_id, log.to_dict())
+    except Exception as e:
+        print(f"⚠️ Log broadcast failed: {e}")

@@ -1577,8 +1577,12 @@ async def get_logs(
     current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get application logs with filtering"""
+    """Get application logs with filtering. Non-admins only see their own logs."""
     query = db.query(Log)
+    
+    # Filter by user_id for non-admins
+    if not current_user.get("is_admin"):
+        query = query.filter(Log.user_id == current_user["id"])
     
     # Filter by category
     if category:
@@ -1628,16 +1632,19 @@ async def get_ai_action_comparison(
     current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Get AI thinking vs actual actions comparison"""
-    # Get AI thinking logs
-    thinking_logs = db.query(Log).filter(
-        Log.category == LogCategory.AI_THINKING
-    ).order_by(Log.timestamp.desc()).limit(limit).all()
+    """Get AI thinking vs actual actions comparison. Non-admins only see their own logs."""
+    # Base queries
+    thinking_query = db.query(Log).filter(Log.category == LogCategory.AI_THINKING)
+    action_query = db.query(Log).filter(Log.category == LogCategory.AI_ACTION)
     
-    # Get AI action logs
-    action_logs = db.query(Log).filter(
-        Log.category == LogCategory.AI_ACTION
-    ).order_by(Log.timestamp.desc()).limit(limit).all()
+    # Filter by user_id for non-admins
+    if not current_user.get("is_admin"):
+        thinking_query = thinking_query.filter(Log.user_id == current_user["id"])
+        action_query = action_query.filter(Log.user_id == current_user["id"])
+    
+    # Execute queries
+    thinking_logs = thinking_query.order_by(Log.timestamp.desc()).limit(limit).all()
+    action_logs = action_query.order_by(Log.timestamp.desc()).limit(limit).all()
     
     # Create comparison
     comparison = []
@@ -1675,12 +1682,12 @@ async def clear_logs(
     current_user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
-    """Clear logs (admin only or by category)"""
-    # Only admin can clear all logs
-    if not category and not current_user.get("is_admin"):
-        raise HTTPException(status_code=403, detail="Only admin can clear all logs")
-    
+    """Clear logs. Admins clear all, users clear their own."""
     query = db.query(Log)
+    
+    # Filter by user_id for non-admins
+    if not current_user.get("is_admin"):
+        query = query.filter(Log.user_id == current_user["id"])
     
     if category:
         try:
@@ -1688,7 +1695,7 @@ async def clear_logs(
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid category")
     
-    deleted_count = query.delete()
+    deleted_count = query.delete(synchronize_session=False)
     db.commit()
     
     return {

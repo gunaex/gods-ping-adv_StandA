@@ -61,6 +61,7 @@ class WebSocketManager:
     
     async def broadcast_log(self, user_id: int, log_entry: dict):
         """Broadcast a log entry to user's connected clients"""
+        print(f"📢 Broadcasting log to user {user_id} (active: {user_id in self.active_connections})")
         message = {
             "type": "log",
             "data": log_entry

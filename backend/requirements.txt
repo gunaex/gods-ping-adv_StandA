@@ -23,6 +23,7 @@ numpy>=1.26.2
 # HTTP & Environment
 requests>=2.31.0
 python-dotenv>=1.0.0
+websocket-client>=1.6.0
 
 # Production Server
 gunicorn>=21.2.0
