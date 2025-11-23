@@ -38,7 +38,7 @@ def init_db():
 
 # CORS - Read from environment variable
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
-allowed_origins = [origin.strip() for origin in CORS_ORIGINS.split(",")]
+allowed_origins = [origin.strip() for origin in CORS_ORIGINS.split(",") if origin.strip()]
 
 app.add_middleware(
     CORSMiddleware,
@@ -134,6 +134,9 @@ class UserResponse(BaseModel):
 @app.on_event("startup")
 async def startup_event():
     """Initialize database with admin user"""
+    from app.db import DATABASE_URL
+    print(f"🚀 Startup: Connecting to DB (masked): {str(DATABASE_URL)[:15]}...")
+    
     db = next(get_db())
     created = ensure_admin_exists(db)
     if created:
@@ -363,18 +366,22 @@ async def get_bot_config(
     db: Session = Depends(get_db)
 ):
     """Get user's bot configuration"""
-    config = db.query(BotConfig).filter(BotConfig.user_id == current_user["id"]).first()
-    
-    if not config:
-        # Create default config
-        config = BotConfig(user_id=current_user["id"])
-        db.add(config)
-        db.commit()
-        db.refresh(config)
-        db.commit()
-        db.refresh(config)
-    
-    return config.to_dict()
+    try:
+        config = db.query(BotConfig).filter(BotConfig.user_id == current_user["id"]).first()
+        
+        if not config:
+            # Create default config
+            config = BotConfig(user_id=current_user["id"])
+            db.add(config)
+            db.commit()
+            db.refresh(config)
+        
+        return config.to_dict()
+    except Exception as e:
+        print(f"❌ Error in get_bot_config: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get bot config: {str(e)}")
 
 
 @app.put("/api/settings/bot-config")
@@ -697,6 +704,9 @@ async def get_balance(
         balance = await get_account_balance(db, current_user['id'], fiat_currency)
         return balance
     except Exception as e:
+        print(f"❌ Error in get_balance: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1138,8 +1148,14 @@ async def get_bot_status(
     """Get status of all bots"""
     from app.bots import get_bot_status as check_status
     
-    status = await check_status(current_user["id"], db)
-    return status
+    try:
+        status = await check_status(current_user["id"], db)
+        return status
+    except Exception as e:
+        print(f"❌ Error in get_bot_status: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to get bot status: {str(e)}")
 
 
 @app.post("/api/bot/gods-hand/reset-kill-switch")
