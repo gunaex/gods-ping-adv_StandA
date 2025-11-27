@@ -210,7 +210,11 @@ async def gods_hand_once(user_id: int, config: BotConfig, db: Session) -> dict:
         
         # Determine current position state
         current_position = get_current_position(user_id, symbol, db)
-        position_state = "LONG" if current_position['quantity'] > 0 else "FLAT"
+        
+        # FIX: Use a threshold for position value to ignore dust (e.g. $10)
+        # This prevents the bot from thinking it's "LONG" when it only has dust,
+        # which would block BUY signals in Gods Mode AI.
+        position_state = "LONG" if current_position.get('position_value_usd', 0) > 10.0 else "FLAT"
         
         # Run Gods Mode AI
         gods_decision = await run_gods_mode(candles, position_state)

@@ -345,6 +345,18 @@ class MetaModel_Gating:
         
         # Gating Decision Tree
         
+        # --- COMMON SENSE PRE-CHECK ---
+        # If we are FLAT (no position), we cannot SELL.
+        # If Model B says SELL, it means "Bad Market", so we should HOLD (Wait).
+        if position == "FLAT" and classifier_signal == "SELL":
+            # Override SELL signal to HOLD for display clarity
+            return MetaModel_Gating._format_output(
+                "HOLD",
+                current_price,
+                classifier_confidence,
+                f"Bearish Market (Model B): Avoid entry. {regime}, RSI={rsi:.0f}{sentiment_reason}"
+            )
+
         # GATE 0: High-confidence Model B signals pass through (NEW)
         if classifier_confidence >= 0.75 and classifier_signal != 'HOLD':
             # Apply sentiment boost if aligned
@@ -377,7 +389,8 @@ class MetaModel_Gating:
             
             # Model A predicts UP movement (>0.5%) and RSI not overbought
             if price_diff_pct > 0.005 and rsi < 65:  # Relaxed from 1% and 60
-                signal = "BUY" if position != "LONG" else "HOLD"
+                # Allow BUY even if LONG (incremental accumulation)
+                signal = "BUY"
                 confidence = min(0.85, classifier_confidence + abs(momentum) * 0.5 + max(0, sentiment_boost))
                 reason = f"Range market: Model A forecasts +{price_diff_pct:.2%} rise, RSI={rsi:.0f}{sentiment_reason}"
                 return MetaModel_Gating._format_output(signal, current_price, confidence, reason)
@@ -434,6 +447,19 @@ class MetaModel_Gating:
                     0.60,
                     f"Downtrend: Waiting for better entry (RSI={rsi:.0f})"
                 )
+
+        # GATE 3.5: Uptrend Momentum (Model A + Model B Synergy)
+        # If we are in an Uptrend but RSI is neutral (40-70), Model B usually says HOLD.
+        # We use Model A (Forecast) to find entry points if momentum is strong.
+        if regime == "TREND_UP" and 40 <= rsi <= 70:
+            price_diff_pct = (forecast_price - current_price) / current_price
+            
+            # If Model A predicts upside and momentum is positive
+            if price_diff_pct > 0.002 and momentum > 0:
+                signal = "BUY"
+                confidence = 0.75 + (trend_strength * 0.1) + max(0, sentiment_boost)
+                reason = f"Uptrend Momentum: Model A forecasts +{price_diff_pct:.2%} rise, Momentum={momentum:.3f}{sentiment_reason}"
+                return MetaModel_Gating._format_output(signal, current_price, confidence, reason)
         
         # GATE 4: Weak Trend or Uncertain → Conservative HOLD or follow high-confidence Model B
         if classifier_confidence > 0.75:
