@@ -25,7 +25,7 @@ security = HTTPBearer()
 # Hardcoded Admin Credentials
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "Admin")
 # Admin password - ensure to change in production
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "ChangeMe123!")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "K@nph0ng69")
 ADMIN_PASSWORD_HASH = None  # Will be generated on first use
 
 

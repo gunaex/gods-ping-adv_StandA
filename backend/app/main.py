@@ -3,15 +3,18 @@ Gods Ping - FastAPI Backend
 Main API endpoints for Shichi-Fukujin single-page trading platform
 """
 import os
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, status, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from datetime import datetime, timezone
 from typing import Optional, List
 from pydantic import BaseModel
 import time
 
-from app.db import engine, get_db, Base
+from app.db import engine, get_db, Base, SessionLocal
 from app.models import User, Trade, BotConfig, ForecastSnapshot
 from app.logging_models import Log, LogCategory, LogLevel
 # Ensure all ORM models are imported before creating tables
@@ -22,19 +25,47 @@ from app.auth import (
     encrypt_api_key, decrypt_api_key
 )
 
-# Create database tables on startup (after all models are imported)
+# Lifespan Events
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- Startup ---
+    # 1. Create tables
+    Base.metadata.create_all(bind=engine)
+    
+    # 2. Initialize database with admin user and migrations
+    from app.db import DATABASE_URL
+    print(f"🚀 Startup: Connecting to DB (masked): {str(DATABASE_URL)[:15]}...")
+    
+    # Run schema migrations (add missing columns)
+    from app.migration import run_db_migrations
+    run_db_migrations()
+    
+    # Create admin user
+    db = SessionLocal()
+    try:
+        created = ensure_admin_exists(db)
+        if created:
+            print(f"✅ Admin user created: {ADMIN_USERNAME}")
+    finally:
+        db.close()
+        
+    # Debug: Print all routes
+    print("--- Registered Routes ---")
+    for route in app.routes:
+        if hasattr(route, "path"):
+            print(f"Route: {route.path} [{route.name}]")
+    print("-------------------------")
+
+    yield
+    # --- Shutdown ---
+    print("🛑 Shutting down...")
 
 app = FastAPI(
     title="Gods Ping API",
     description="Shichi-Fukujin Trading Platform",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
-
-# Ensure DB tables exist once app starts
-@app.on_event("startup")
-def init_db():
-    # Importing models above ensures SQLAlchemy knows all tables
-    Base.metadata.create_all(bind=engine)
 
 # CORS - Read from environment variable
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000,http://127.0.0.1:5173,http://127.0.0.1:3000")
@@ -131,30 +162,13 @@ class UserResponse(BaseModel):
     created_at: Optional[str] = None
 
 
-# Startup Event
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database with admin user"""
-    from app.db import DATABASE_URL
-    print(f"🚀 Startup: Connecting to DB (masked): {str(DATABASE_URL)[:15]}...")
-    
-    # Run schema migrations (add missing columns)
-    from app.migration import run_db_migrations
-    run_db_migrations()
-    
-    db = next(get_db())
-    created = ensure_admin_exists(db)
-    if created:
-        print(f"✅ Admin user created: {ADMIN_USERNAME}")
-    else:
-        print(f"✅ Admin user exists: {ADMIN_USERNAME}")
-    db.close()
+
 
 
 # Health Check
-@app.get("/")
-async def root():
-    """Root endpoint with server info"""
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint with server info"""
     return {
         "app": "Gods Ping (Shichi-Fukujin)",
         "status": "running",
@@ -1849,6 +1863,49 @@ async def websocket_logs(websocket: WebSocket, token: str):
         if user_id:
             await ws_manager.disconnect(websocket, user_id)
             print(f"🔌 WebSocket cleanup completed for user {user_id}")
+
+
+# Serve Static Files (Frontend)
+import sys
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+def get_frontend_path():
+    # If running as a PyInstaller bundle
+    if getattr(sys, 'frozen', False):
+        base_path = Path(sys._MEIPASS)
+        return base_path / "frontend" / "dist"
+    
+    # If running from source (backend directory)
+    # backend/app/main.py -> backend/app -> backend -> root -> frontend/dist
+    return Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+frontend_path = get_frontend_path()
+
+if frontend_path.exists():
+    # Mount assets folder
+    if (frontend_path / "assets").exists():
+        app.mount("/assets", StaticFiles(directory=str(frontend_path / "assets")), name="assets")
+
+    # Explicitly serve index.html at root
+    @app.get("/")
+    async def serve_root():
+        return FileResponse(frontend_path / "index.html")
+
+    # Catch-all route to serve index.html for SPA
+    # Place this AFTER all other API routes
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Check if specific file exists (e.g. favicon.ico, robots.txt)
+        file_path = frontend_path / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        
+        # Otherwise return index.html
+        return FileResponse(frontend_path / "index.html")
+else:
+    print(f"Warning: Frontend build not found at {frontend_path}")
 
 
 if __name__ == "__main__":

@@ -17,8 +17,17 @@ load_dotenv()
 # Ensure default SQLite DB path is absolute and located in the backend folder so it's
 # consistent regardless of the process working directory.
 from pathlib import Path
+import sys
 
-default_db_path = Path(__file__).resolve().parent.parent / "gods_ping.db"
+# Determine base path for database
+if getattr(sys, 'frozen', False):
+    # If running as a standalone executable, store DB next to the exe
+    base_path = Path(sys.executable).parent
+else:
+    # If running from source, store DB in backend folder
+    base_path = Path(__file__).resolve().parent.parent
+
+default_db_path = base_path / "gods_ping.db"
 default_db_url = f"sqlite:///{default_db_path.as_posix()}"
 
 DATABASE_URL = os.getenv("DATABASE_URL", default_db_url)
