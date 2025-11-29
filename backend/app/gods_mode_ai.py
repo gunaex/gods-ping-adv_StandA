@@ -258,7 +258,7 @@ class ModelB_Classifier:
             # Sideways: Range-bound mean reversion
             if rsi > 65 and volatility < 0.02:
                 return "SELL", 0.75  # Sell resistance in low vol
-            elif rsi < 35 and volatility < 0.02:
+            elif rsi < 45 and volatility < 0.02:  # Relaxed from 35 to 45
                 return "BUY", 0.70  # Buy support in low vol
             else:
                 return "HOLD", 0.55
@@ -387,8 +387,9 @@ class MetaModel_Gating:
         if regime == "RANGE" and volatility < 0.025:  # Relaxed from 0.02
             price_diff_pct = (forecast_price - current_price) / current_price
             
-            # Model A predicts UP movement (>0.5%) and RSI not overbought
-            if price_diff_pct > 0.005 and rsi < 65:  # Relaxed from 1% and 60
+            # Model A predicts UP movement (>0.1%) and RSI not overbought
+            # LOWERED THRESHOLD: 0.5% -> 0.1% to allow accumulation in tight ranges
+            if price_diff_pct > 0.001 and rsi < 65:
                 # Allow BUY even if LONG (incremental accumulation)
                 signal = "BUY"
                 confidence = min(0.85, classifier_confidence + abs(momentum) * 0.5 + max(0, sentiment_boost))
@@ -412,7 +413,7 @@ class MetaModel_Gating:
                 )
         
         # GATE 3: Downtrend → Ensemble weighted toward Model B - RELAXED threshold
-        if regime == "TREND_DOWN" and momentum < -0.005:  # Relaxed from -0.01:  # Relaxed from -0.01
+        if regime == "TREND_DOWN":
             # Downtrend confirmed by both models
             if classifier_signal == "SELL" and position == "LONG":
                 # Exit longs in downtrend
@@ -440,6 +441,16 @@ class MetaModel_Gating:
                     f"Downtrend: Oversold bounce opportunity (RSI={rsi:.0f}){sentiment_reason}"
                 )
             
+            # NEW: Aggressive Reversal Buy in Downtrend
+            # If momentum is turning positive and Model A predicts upside, take a risk
+            elif momentum > 0.002 and forecast_price > current_price * 1.002:
+                 return MetaModel_Gating._format_output(
+                    "BUY",
+                    current_price,
+                    0.65 + max(0, sentiment_boost), # Moderate confidence
+                    f"Downtrend Reversal: Momentum turning positive (+{momentum:.3f}), Forecast UP{sentiment_reason}"
+                )
+
             else:
                 return MetaModel_Gating._format_output(
                     "HOLD",

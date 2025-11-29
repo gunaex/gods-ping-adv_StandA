@@ -150,13 +150,28 @@ def get_current_position(user_id: int, symbol: str, db: Session) -> Dict:
             # When selling: pay fee in USD (you receive slightly less USD)
             fee_in_usd = trade_value * BINANCE_FEE_RATE
             
+            # Calculate cost of the sold portion to maintain accurate Cost Basis
+            # (Weighted Average Cost method)
+            if quantity > 0:
+                avg_price_before_sell = cost_basis / quantity
+                cost_of_sold_portion = trade_amount * avg_price_before_sell
+            else:
+                cost_of_sold_portion = 0.0
+
             # Remove from position
             quantity -= trade_amount
-            cost_basis -= trade_value - fee_in_usd  # Net USD received after fee
+            # Reduce cost basis by the COST of what was sold, not the VALUE it was sold for
+            cost_basis -= cost_of_sold_portion 
             total_fees += fee_in_usd
     
-    # Calculate average price (avoid division by zero)
-    average_price = (cost_basis / quantity) if quantity > 0 else 0.0
+    # Handle floating point errors (if quantity is near zero, reset cost basis)
+    if quantity <= 0.00000001:
+        quantity = 0.0
+        cost_basis = 0.0
+        average_price = 0.0
+    else:
+        # Calculate average price (avoid division by zero)
+        average_price = (cost_basis / quantity) if quantity > 0 else 0.0
     
     return {
         "symbol": symbol,

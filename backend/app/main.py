@@ -1120,12 +1120,20 @@ async def start_gods_hand(
     except Exception:
         pass
 
-    result = await start_gods_hand_entry(current_user["id"], db, continuous=continuous, interval_seconds=interval_seconds)
-    logger.info(f"Gods Hand start result: {result}")
-    
-    if result.get("status") == "error":
-        raise HTTPException(status_code=400, detail=result.get("message", "Failed to start Gods Hand"))
-    return result
+    try:
+        result = await start_gods_hand_entry(current_user["id"], db, continuous=continuous, interval_seconds=interval_seconds)
+        logger.info(f"Gods Hand start result: {result}")
+        
+        if result.get("status") == "error":
+            raise HTTPException(status_code=400, detail=result.get("message", "Failed to start Gods Hand"))
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start Gods Hand: {e}", exc_info=True)
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal Server Error starting Gods Hand: {str(e)}")
 
 
 @app.post("/api/bot/{bot_type}/stop")

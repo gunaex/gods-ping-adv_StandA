@@ -3,6 +3,7 @@ import { useStore } from './store';
 import { authAPI } from './api';
 import LoginPage from './components/LoginPage';
 import ShichiFukujin from './components/ShichiFukujin';
+import SystemStatus from './components/SystemStatus';
 
 function App() {
   const { token, user, login, logout } = useStore();
@@ -42,7 +43,12 @@ function App() {
     return <LoginPage />;
   }
 
-  return <ShichiFukujin />;
+  return (
+    <>
+      <ShichiFukujin />
+      <SystemStatus />
+    </>
+  );
 }
 
 export default App;

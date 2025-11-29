@@ -50,10 +50,28 @@ class BinanceThailandClient:
             if not self.api_key or not self.api_secret:
                 raise ValueError("API key and secret required for signed endpoints")
             
-            params = kwargs.get('params', {})
+            params = kwargs.pop('params', {})
             params['timestamp'] = int(time.time() * 1000)
-            params['signature'] = self._generate_signature(params)
-            kwargs['params'] = params
+            
+            # Generate query string manually to ensure signature matches exactly what is sent
+            # Sort params to be deterministic
+            ordered_params = sorted(params.items())
+            query_string = '&'.join([f"{k}={v}" for k, v in ordered_params])
+            
+            signature = hmac.new(
+                self.api_secret.encode('utf-8'),
+                query_string.encode('utf-8'),
+                hashlib.sha256
+            ).hexdigest()
+            
+            # Append signature
+            full_query = f"{query_string}&signature={signature}"
+            
+            # Append to URL
+            if '?' in url:
+                url = f"{url}&{full_query}"
+            else:
+                url = f"{url}?{full_query}"
         
         try:
             response = self.session.request(method, url, **kwargs)

@@ -14,6 +14,39 @@ import asyncio
 # Market data client (no auth, cached)
 market_client = get_market_data_client()
 
+# Cache for symbol info
+_symbol_info_cache = {}
+
+async def get_symbol_step_size(symbol: str) -> float:
+    """Get step size for symbol quantity rounding"""
+    if symbol in _symbol_info_cache:
+        return _symbol_info_cache[symbol]
+    
+    try:
+        # Use the underlying client from market_client
+        client = market_client.client
+        binance_symbol = symbol.replace('/', '')
+        # Run in thread pool to avoid blocking async loop
+        info = await asyncio.to_thread(client.get_exchange_info, binance_symbol)
+        
+        symbols = info.get('symbols', [])
+        if not symbols:
+            return 0.00001 # Default fallback
+            
+        symbol_info = symbols[0]
+        for filter in symbol_info.get('filters', []):
+            if filter['filterType'] == 'LOT_SIZE':
+                step_size = float(filter['stepSize'])
+                if step_size == 0:
+                    step_size = 0.00001 # Fallback if 0
+                _symbol_info_cache[symbol] = step_size
+                return step_size
+        
+        return 0.00001 # Default if filter not found
+    except Exception as e:
+        print(f"Failed to get symbol info: {e}")
+        return 0.00001 # Default fallback
+
 
 async def get_account_balance(db: Session, user_id: int, fiat_currency: str = "USD") -> dict:
     """Get account balance and P/L from Binance TH or paper trading simulation"""
@@ -354,6 +387,21 @@ async def execute_market_trade(
     client = get_binance_th_client(api_key, api_secret)
     
     try:
+        # Get step size for rounding to avoid "too much precision" error
+        step_size = await get_symbol_step_size(symbol)
+        
+        # Round amount down to step size precision
+        # Example: amount=0.123456, step=0.001 -> 0.123
+        if step_size > 0:
+            import math
+            # Calculate precision decimals (e.g. 0.001 -> 3)
+            precision = int(round(-math.log(step_size, 10), 0))
+            
+            # Floor to step size
+            amount = math.floor(amount / step_size) * step_size
+            # Round to precision to avoid floating point artifacts (e.g. 0.12300000001)
+            amount = round(amount, precision)
+        
         # Execute market order using the native client
         if side.upper() == 'BUY':
             order = client.create_market_buy_order(symbol, amount)
@@ -370,7 +418,14 @@ async def execute_market_trade(
             "timestamp": order.get('transactTime')
         }
     except Exception as e:
-        raise Exception(f"Trade execution failed: {str(e)}")
+        error_msg = str(e)
+        # If it's a requests HTTPError, try to get the response body
+        if hasattr(e, 'response') and e.response is not None:
+            try:
+                error_msg += f" Response: {e.response.text}"
+            except:
+                pass
+        raise Exception(f"Trade execution failed: {error_msg}")
 
 
 # Cleanup on shutdown
