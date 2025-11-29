@@ -14,7 +14,7 @@ const SystemStatus: React.FC = () => {
     setIsRefreshing(true);
     try {
       // 1. Check Server Connection (General logs)
-      const res = await api.get('/logs?limit=1');
+      await api.get('/logs?limit=1');
       
       // 2. Check AI Heartbeat specifically (Category: bot)
       // This ensures we find the heartbeat even if other logs are spamming
